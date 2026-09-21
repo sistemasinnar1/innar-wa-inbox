@@ -8,6 +8,8 @@
   let sending = false;
   let loadedEvents = [];
   let currentTab = 'eventos';
+  let calendarKeys = [];
+  let sendingOne = false;
 
   function $(id) { return document.getElementById(id); }
 
@@ -71,6 +73,19 @@
       el.textContent = 'Twilio no configurado';
       el.className = 'wa-status-pill is-warn';
     }
+    if (status && Array.isArray(status.calendars)) {
+      calendarKeys = status.calendars;
+      fillCalendarSelect();
+    }
+  }
+
+  function fillCalendarSelect() {
+    const sel = $('neCalendar');
+    if (!sel) return;
+    const keys = calendarKeys.length
+      ? calendarKeys
+      : ['Dra_Angela', 'Dra_Karen', 'Dra_Adriana', 'Dra_Valentina'];
+    sel.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
   }
 
   function todayYmd() {
@@ -123,21 +138,27 @@
     if (wrap) wrap.classList.remove('hidden');
 
     const sorted = loadedEvents.slice().sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
-    body.innerHTML = sorted.map((ev, idx) => {
+    body.innerHTML = sorted.map((ev) => {
       const phone = ev.telefono || '';
       const phoneHtml = phone
         ? esc(formatPhone(phone))
         : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
-      return `<tr data-ev-idx="${idx}">
+      const evJson = esc(JSON.stringify(ev));
+      return `<tr>
         <td>${esc(ev.hora || '—')}</td>
         <td>${esc(ev.paciente || '—')}</td>
         <td>${phoneHtml}</td>
         <td>${esc(ev.profesional || '—')}</td>
         <td>${esc(ev.calendar_key || '—')}</td>
         <td>
-          <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" ${phone ? '' : 'disabled'}>
-            Ver chat
-          </button>
+          <div class="wa-ev-actions">
+            <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>
+              Enviar WA
+            </button>
+            <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>
+              Ver chat
+            </button>
+          </div>
         </td>
       </tr>`;
     }).join('');
@@ -275,20 +296,112 @@
     renderConvList();
   }
 
-  async function openChatByPhone(phone) {
+  async function sendOneEvent(ev, { openChatAfter } = {}) {
+    if (!ev || !ev.telefono) {
+      window.alert('Este evento no tiene teléfono');
+      return null;
+    }
+    if (sendingOne) return null;
+    sendingOne = true;
+    try {
+      const data = await api('/api/calendars/send-one', {
+        method: 'POST',
+        body: JSON.stringify({ event: ev })
+      });
+      await loadConversations();
+      if (openChatAfter && data.conversation) {
+        switchTab('chats');
+        await openConversation(data.conversation.id);
+      }
+      return data;
+    } finally {
+      sendingOne = false;
+    }
+  }
+
+  async function openChatByPhone(phone, ev) {
     const digits = String(phone || '').replace(/\D/g, '');
     if (!digits) {
       window.alert('Este evento no tiene teléfono');
       return;
     }
-    switchTab('chats');
     await loadConversations();
     const found = conversations.find((c) => String(c.phone || '').replace(/\D/g, '') === digits);
     if (found) {
+      switchTab('chats');
       await openConversation(found.id);
-    } else {
-      showThread(null);
-      window.alert('Aún no hay chat con este número. Envíe el recordatorio primero o espere una respuesta del paciente.');
+      return;
+    }
+    // Sin chat: ofrecer enviar recordatorio y abrir
+    if (!ev) {
+      window.alert('Aún no hay chat. Use «Enviar WA» en el evento.');
+      return;
+    }
+    const ok = window.confirm(
+      `No hay chat con ${ev.paciente || formatPhone(digits)}.\n¿Enviar el recordatorio WhatsApp ahora y abrir el chat?`
+    );
+    if (!ok) return;
+    try {
+      await sendOneEvent(ev, { openChatAfter: true });
+    } catch (err) {
+      window.alert(err.hint ? `${err.message}\n${err.hint}` : err.message);
+    }
+  }
+
+  function openNewEventModal() {
+    const bd = $('waModalBackdrop');
+    if (!bd) return;
+    fillCalendarSelect();
+    const dateEl = $('waCalDate');
+    const neFecha = $('neFecha');
+    if (neFecha) neFecha.value = (dateEl && dateEl.value) || todayYmd();
+    const neHora = $('neHora');
+    if (neHora && !neHora.value) neHora.value = '09:00';
+    bd.classList.remove('hidden');
+    bd.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeNewEventModal() {
+    const bd = $('waModalBackdrop');
+    if (!bd) return;
+    bd.classList.add('hidden');
+    bd.setAttribute('aria-hidden', 'true');
+  }
+
+  async function submitNewEvent(ev) {
+    if (ev) ev.preventDefault();
+    const payload = {
+      calendar_key: $('neCalendar').value,
+      paciente: $('nePaciente').value.trim(),
+      telefono: $('neTelefono').value.trim(),
+      date: $('neFecha').value,
+      time: $('neHora').value,
+      duration_min: parseInt($('neDuracion').value, 10) || 45,
+      ubicacion: ($('neUbicacion').value || '').trim()
+    };
+    const sendWa = $('neSendWa') && $('neSendWa').checked;
+    try {
+      const data = await api('/api/calendars/events', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      const created = data.event;
+      if (created) {
+        loadedEvents.push(created);
+        renderEvents();
+      }
+      closeNewEventModal();
+      $('waNewEventForm').reset();
+      if ($('neDuracion')) $('neDuracion').value = '45';
+      if (sendWa && created) {
+        await sendOneEvent(created, { openChatAfter: true });
+      } else if ($('waCalDate') && payload.date === $('waCalDate').value) {
+        // keep list; optional reload
+      }
+      const resultEl = $('waCalResult');
+      if (resultEl) resultEl.textContent = `Evento creado: ${created.paciente}`;
+    } catch (err) {
+      window.alert(err.hint ? `${err.message}\n${err.hint}` : err.message);
     }
   }
 
@@ -359,11 +472,39 @@
   const eventsWrap = $('waEventsTableWrap');
   if (eventsWrap) {
     eventsWrap.addEventListener('click', (ev) => {
+      const sendBtn = ev.target.closest('[data-send-one]');
+      if (sendBtn && !sendBtn.disabled) {
+        let eventObj = null;
+        try { eventObj = JSON.parse(sendBtn.getAttribute('data-send-one')); } catch (_) {}
+        if (!eventObj) return;
+        if (!window.confirm(`¿Enviar recordatorio a ${eventObj.paciente}?`)) return;
+        sendOneEvent(eventObj, { openChatAfter: true }).catch((e) => {
+          window.alert(e.hint ? `${e.message}\n${e.hint}` : e.message);
+        });
+        return;
+      }
       const btn = ev.target.closest('[data-open-chat]');
       if (!btn || btn.disabled) return;
-      openChatByPhone(btn.getAttribute('data-open-chat')).catch((e) => window.alert(e.message));
+      let eventObj = null;
+      try { eventObj = JSON.parse(btn.getAttribute('data-event') || 'null'); } catch (_) {}
+      openChatByPhone(btn.getAttribute('data-open-chat'), eventObj).catch((e) => window.alert(e.message));
     });
   }
+
+  const btnCalNew = $('btnCalNew');
+  if (btnCalNew) btnCalNew.addEventListener('click', openNewEventModal);
+  const btnModalClose = $('btnModalClose');
+  if (btnModalClose) btnModalClose.addEventListener('click', closeNewEventModal);
+  const btnModalCancel = $('btnModalCancel');
+  if (btnModalCancel) btnModalCancel.addEventListener('click', closeNewEventModal);
+  const modalBd = $('waModalBackdrop');
+  if (modalBd) {
+    modalBd.addEventListener('click', (e) => {
+      if (e.target === modalBd) closeNewEventModal();
+    });
+  }
+  const newForm = $('waNewEventForm');
+  if (newForm) newForm.addEventListener('submit', submitNewEvent);
 
   $('waConvList').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-id]');

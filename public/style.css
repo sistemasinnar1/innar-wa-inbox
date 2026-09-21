@@ -236,6 +236,104 @@ body {
   color: var(--muted);
 }
 
+.wa-ev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wa-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 35, 28, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.wa-modal {
+  width: min(480px, 100%);
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  max-height: 92vh;
+  overflow: auto;
+}
+
+.wa-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(26, 46, 34, 0.08);
+}
+
+.wa-modal-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.wa-modal-close {
+  border: none;
+  background: transparent;
+  font-size: 1.4rem;
+  cursor: pointer;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.wa-modal-body {
+  padding: 14px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wa-modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.wa-modal-body input,
+.wa-modal-body select {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(26, 46, 34, 0.16);
+  color: var(--ink);
+}
+
+.wa-modal-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.8fr;
+  gap: 10px;
+}
+
+.wa-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--ink) !important;
+  font-size: 0.88rem !important;
+}
+
+.wa-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@media (max-width: 560px) {
+  .wa-modal-row { grid-template-columns: 1fr; }
+}
+
 .wa-calendar-bar {
   display: flex;
   flex-wrap: wrap;

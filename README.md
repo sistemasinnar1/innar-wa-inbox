@@ -31,7 +31,8 @@ Webhook Twilio:
    - `GOOGLE_CLIENT_EMAIL` = `client_email` del JSON
    - `GOOGLE_PRIVATE_KEY` = `private_key` del JSON (con `\n`)
 4. En cada calendario de Google (Angela, Karen, Adriana, Valentina):
-   **Compartir** con ese `client_email` → permiso **Ver todos los detalles de los eventos**.
+   **Compartir** con ese `client_email` → permiso **Hacer cambios en los eventos**
+   (hace falta “cambios” para crear citas desde la web; “ver” solo alcanza para listar).
 5. `TWILIO_CONTENT_SID` = plantilla Approved (variables 1–5 como en el Script).
 
 Sin compartir los calendarios, la API devolverá error de acceso.

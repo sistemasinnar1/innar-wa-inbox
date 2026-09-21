@@ -328,6 +328,60 @@ app.post('/api/calendars/sync', requireAuth, async (req, res) => {
   }
 });
 
+/** Envía recordatorio de UN evento y abre conversación en bandeja. */
+app.post('/api/calendars/send-one', requireAuth, async (req, res) => {
+  try {
+    if (!String(process.env.TWILIO_CONTENT_SID || '').trim()) {
+      return res.status(503).json({ error: 'Falta TWILIO_CONTENT_SID' });
+    }
+    const ev = req.body?.event || req.body;
+    if (!ev || !ev.telefono) {
+      return res.status(400).json({ error: 'Falta el evento con teléfono' });
+    }
+    const results = await reminders.sendRemindersForEvents([ev], { emit: emitWa });
+    const one = results[0];
+    if (!one || !one.ok) {
+      return res.status(502).json({ error: (one && one.error) || 'No se pudo enviar', results });
+    }
+    const phone = cal.normalizarTelefono(ev.telefono);
+    const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE phone = ? LIMIT 1', [phone]);
+    res.json({
+      ok: true,
+      sid: one.sid,
+      conversation: conv ? mapConversation(conv) : null,
+      event: ev
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, code: e.code });
+  }
+});
+
+/** Crea evento en Google Calendar. */
+app.post('/api/calendars/events', requireAuth, async (req, res) => {
+  try {
+    if (!cal.googleConfigured()) {
+      return res.status(503).json({ error: 'Google Calendar no configurado' });
+    }
+    const b = req.body || {};
+    const created = await cal.createEvent({
+      calendarKey: String(b.calendar_key || '').trim(),
+      paciente: b.paciente,
+      telefono: b.telefono,
+      dateYmd: String(b.date || '').trim(),
+      timeHm: String(b.time || '').trim(),
+      durationMin: b.duration_min,
+      ubicacion: b.ubicacion
+    });
+    res.status(201).json({ event: created });
+  } catch (e) {
+    const status = e.code === 'UNKNOWN_CALENDAR' || e.code === 'INVALID_PHONE'
+      || e.code === 'NO_PATIENT' || e.code === 'BAD_DATETIME'
+      ? 400
+      : 500;
+    res.status(status).json({ error: e.message, code: e.code });
+  }
+});
+
 app.get('/api/conversations', requireAuth, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();

@@ -31,7 +31,8 @@
           <input type="date" id="waCalDate" />
         </label>
         <button type="button" id="btnCalLoad" class="wa-btn-sec">Cargar eventos</button>
-        <button type="button" id="btnCalSend" class="wa-btn-prim">Enviar recordatorios</button>
+        <button type="button" id="btnCalSend" class="wa-btn-prim">Enviar todos</button>
+        <button type="button" id="btnCalNew" class="wa-btn-sec">+ Nuevo evento</button>
         <span id="waCalResult" class="wa-cal-result"></span>
       </div>
       <div class="wa-events-wrap">
@@ -83,6 +84,49 @@
       </div>
     </section>
   </div>
+
+  <div id="waModalBackdrop" class="wa-modal-backdrop hidden" aria-hidden="true">
+    <div class="wa-modal" role="dialog" aria-labelledby="waModalTitle">
+      <header class="wa-modal-head">
+        <h2 id="waModalTitle">Nuevo evento</h2>
+        <button type="button" id="btnModalClose" class="wa-modal-close" aria-label="Cerrar">×</button>
+      </header>
+      <form id="waNewEventForm" class="wa-modal-body">
+        <label>Profesional / calendario
+          <select id="neCalendar" required></select>
+        </label>
+        <label>Paciente
+          <input type="text" id="nePaciente" required maxlength="120" placeholder="Nombre" />
+        </label>
+        <label>Teléfono
+          <input type="tel" id="neTelefono" required maxlength="20" placeholder="3001234567" />
+        </label>
+        <div class="wa-modal-row">
+          <label>Fecha
+            <input type="date" id="neFecha" required />
+          </label>
+          <label>Hora
+            <input type="time" id="neHora" required />
+          </label>
+          <label>Duración (min)
+            <input type="number" id="neDuracion" min="15" max="480" value="45" />
+          </label>
+        </div>
+        <label>Ubicación (opcional)
+          <input type="text" id="neUbicacion" maxlength="200" />
+        </label>
+        <label class="wa-check">
+          <input type="checkbox" id="neSendWa" />
+          Enviar recordatorio WhatsApp al crear
+        </label>
+        <div class="wa-modal-actions">
+          <button type="button" id="btnModalCancel" class="wa-btn-sec">Cancelar</button>
+          <button type="submit" class="wa-btn-prim">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>
