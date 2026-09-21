@@ -31,7 +31,7 @@
     { key: 'Dra_Angela', name: 'Angela Legarda', accent: '#0f766e' },
     { key: 'Dra_Karen', name: 'Karen Chamorro', accent: '#047857' },
     { key: 'Dra_Adriana', name: 'Adriana Gelpud', accent: '#1d4ed8' },
-    { key: 'Dra_Valentina', name: 'Valentina', accent: '#b45309' }
+    { key: 'Dra_Valentina', name: 'Valentina Piedrahita', accent: '#b45309' }
   ];
 
   function $(id) { return document.getElementById(id); }
