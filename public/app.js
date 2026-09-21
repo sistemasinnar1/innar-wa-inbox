@@ -398,6 +398,55 @@
 
   let eventFilter = 'all'; // all | pending | sent | phone
 
+  function eventTimeMinutes(ev) {
+    if (ev && ev.start_iso) {
+      const d = new Date(ev.start_iso);
+      if (!Number.isNaN(d.getTime())) {
+        const h = parseInt(new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Bogota', hour: '2-digit', hourCycle: 'h23'
+        }).format(d), 10);
+        const m = parseInt(new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Bogota', minute: '2-digit'
+        }).format(d), 10);
+        if (!Number.isNaN(h) && !Number.isNaN(m)) return h * 60 + m;
+      }
+    }
+    const s = String(ev && ev.hora || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const match = s.match(/(\d{1,2}):(\d{2})\s*(a\.?\s*m\.?|p\.?\s*m\.?|am|pm)?/i);
+    if (!match) return 9999;
+    let h = parseInt(match[1], 10);
+    const min = parseInt(match[2], 10);
+    const ap = String(match[3] || '').replace(/\./g, '').replace(/\s/g, '');
+    if (ap.startsWith('p') && h < 12) h += 12;
+    if (ap.startsWith('a') && h === 12) h = 0;
+    return h * 60 + min;
+  }
+
+  function rsvpForPhone(phone) {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) return null;
+    const want = digits.length === 10 ? `57${digits}` : digits;
+    const found = conversations.find((c) => {
+      let p = String(c.phone || '').replace(/\D/g, '');
+      if (p.length === 10) p = `57${p}`;
+      return p === want;
+    });
+    return (found && found.last_rsvp) || null;
+  }
+
+  function rsvpBadgeHtml(rsvp) {
+    if (rsvp === 'si_asistire') {
+      return '<span class="wa-badge wa-badge-si">✅ Sí asistiré</span>';
+    }
+    if (rsvp === 'no_asistire') {
+      return '<span class="wa-badge wa-badge-no">❌ No asistiré</span>';
+    }
+    if (rsvp === 'escribenos') {
+      return '<span class="wa-badge wa-badge-ask">💬 Escríbenos</span>';
+    }
+    return '';
+  }
+
   function eventCardHtml(ev) {
     const st = analyzePhone(ev.telefono);
     const phone = st.phone || '';
@@ -405,6 +454,7 @@
     const canSend = st.ok && !sent;
     const canResend = st.ok && sent;
     const evJson = esc(JSON.stringify(ev));
+    const rsvp = rsvpForPhone(phone || ev.telefono);
 
     let phoneLabel;
     let phoneClass = 'wa-ev-phone-btn';
@@ -427,12 +477,15 @@
         ? '<span class="wa-badge wa-badge-pending">Pendiente</span>'
         : '<span class="wa-badge wa-badge-bad">Tel.</span>');
 
-    return `<article class="wa-ev-card${sent ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}">
+    const rsvpHtml = rsvpBadgeHtml(rsvp);
+
+    return `<article class="wa-ev-card${sent ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}${rsvp === 'no_asistire' ? ' is-rsvp-no' : ''}${rsvp === 'si_asistire' ? ' is-rsvp-si' : ''}">
       <header class="wa-ev-card-top">
         <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
         ${statusHtml}
       </header>
       <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
+      ${rsvpHtml ? `<div class="wa-ev-rsvp">${rsvpHtml}</div>` : ''}
       <button type="button" class="${phoneClass}" data-edit-phone='${evJson}' title="Editar teléfono">
         <span>${esc(phoneLabel)}</span>
         <span class="wa-ev-phone-edit">✎</span>
@@ -450,9 +503,13 @@
   function eventMatchesFilter(ev) {
     const st = analyzePhone(ev.telefono);
     const sent = eventIsSent(ev);
+    const rsvp = rsvpForPhone(st.phone || ev.telefono);
     if (eventFilter === 'pending') return !sent && st.ok;
     if (eventFilter === 'sent') return sent;
     if (eventFilter === 'phone') return !st.ok;
+    if (eventFilter === 'si') return rsvp === 'si_asistire';
+    if (eventFilter === 'no') return rsvp === 'no_asistire';
+    if (eventFilter === 'ask') return rsvp === 'escribenos';
     return true;
   }
 
@@ -461,14 +518,18 @@
       btn.classList.toggle('is-active', btn.getAttribute('data-ev-filter') === eventFilter);
     });
     const scope = eventsForSelectedCalendar();
-    const counts = { all: 0, pending: 0, sent: 0, phone: 0 };
+    const counts = { all: 0, pending: 0, sent: 0, phone: 0, si: 0, no: 0, ask: 0 };
     scope.forEach((ev) => {
       counts.all += 1;
       const st = analyzePhone(ev.telefono);
       const sent = eventIsSent(ev);
+      const rsvp = rsvpForPhone(st.phone || ev.telefono);
       if (sent) counts.sent += 1;
       else if (st.ok) counts.pending += 1;
       if (!st.ok) counts.phone += 1;
+      if (rsvp === 'si_asistire') counts.si += 1;
+      else if (rsvp === 'no_asistire') counts.no += 1;
+      else if (rsvp === 'escribenos') counts.ask += 1;
     });
     const set = (id, n) => {
       const el = $(id);
@@ -478,6 +539,9 @@
     set('evCountPending', counts.pending);
     set('evCountSent', counts.sent);
     set('evCountPhone', counts.phone);
+    set('evCountSi', counts.si);
+    set('evCountNo', counts.no);
+    set('evCountAsk', counts.ask);
   }
 
   function renderEvents() {
@@ -492,7 +556,7 @@
     const list = eventsForSelectedCalendar()
       .filter(eventMatchesFilter)
       .slice()
-      .sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
+      .sort((a, b) => eventTimeMinutes(a) - eventTimeMinutes(b));
 
     updateFilterChips();
 
@@ -612,14 +676,19 @@
       const name = c.display_name || formatPhone(c.phone);
       const unread = Number(c.unread_count) || 0;
       const active = Number(c.id) === Number(activeId) ? ' is-active' : '';
+      const rsvp = rsvpBadgeHtml(c.last_rsvp);
       return `<button type="button" class="wa-conv-item${active}" data-id="${c.id}">
         <div class="wa-conv-avatar">${esc(initials(name))}</div>
-        <div>
+        <div class="wa-conv-body">
           <div class="wa-conv-top">
             <span class="wa-conv-name">${esc(name)}</span>
-            <span class="wa-conv-time">${esc(formatTime(c.last_message_at))}${unread ? ` <span class="wa-unread">${unread}</span>` : ''}</span>
+            <span class="wa-conv-time">${esc(formatTime(c.last_message_at))}</span>
           </div>
           <div class="wa-conv-preview">${esc(c.last_message_preview || '')}</div>
+          <div class="wa-conv-meta">
+            ${rsvp || ''}
+            ${unread ? `<span class="wa-unread">${unread}</span>` : ''}
+          </div>
         </div>
       </button>`;
     }).join('');
@@ -668,6 +737,8 @@
     $('waThreadPhone').textContent = formatPhone(conv.phone);
     const av = $('waThreadAvatar');
     if (av) av.textContent = initials(name);
+    const rsvpEl = $('waThreadRsvp');
+    if (rsvpEl) rsvpEl.innerHTML = rsvpBadgeHtml(conv.last_rsvp) || '';
   }
 
   async function loadConversations(q) {
@@ -988,12 +1059,14 @@
     else conversations.unshift(conv);
     conversations.sort((a, b) => String(b.last_message_at || '').localeCompare(String(a.last_message_at || '')));
     renderConvList();
+    if (Number(conv.id) === Number(activeId)) showThread(conversations.find((c) => Number(c.id) === Number(activeId)));
   }
 
   function onWaMessage(payload) {
     const conv = payload && payload.conversation;
     const msg = payload && payload.message;
     if (conv) upsertConversation(conv);
+    if (loadedEvents.length) renderEvents();
     if (!msg || Number(msg.conversation_id) !== Number(activeId)) return;
     if (messages.some((m) => Number(m.id) === Number(msg.id))) return;
     if (msg.twilio_sid && messages.some((m) => m.twilio_sid === msg.twilio_sid)) return;

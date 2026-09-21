@@ -120,7 +120,9 @@ function mapConversation(row) {
     display_name: row.display_name,
     last_message_at: row.last_message_at,
     last_message_preview: row.last_message_preview,
-    unread_count: Number(row.unread_count) || 0
+    unread_count: Number(row.unread_count) || 0,
+    last_rsvp: row.last_rsvp || null,
+    last_rsvp_at: row.last_rsvp_at || null
   };
 }
 
@@ -229,6 +231,13 @@ app.post('/api/webhook', async (req, res) => {
           preview: wa.previewText(displayBody),
           incrementUnread: true
         });
+        const kindEarly = wa.classifyButtonPayload(buttonPayload, rawBody);
+        if (kindEarly === 'si_asistire' || kindEarly === 'no_asistire' || kindEarly === 'escribenos') {
+          await db.execute(
+            `UPDATE wa_conversations SET last_rsvp = ?, last_rsvp_at = NOW() WHERE id = ?`,
+            [kindEarly, conv.id]
+          );
+        }
         const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
         const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
         emitWa('wa:message', {
@@ -586,9 +595,38 @@ app.get('/', requireAuth, (req, res) => {
 
 app.use(express.static(PUBLIC_DIR));
 
+async function backfillRsvpFromMessages() {
+  try {
+    const rows = await db.query(
+      `SELECT conversation_id, button_payload, body
+       FROM wa_messages
+       WHERE direction = 'in'
+       ORDER BY id DESC
+       LIMIT 2000`
+    );
+    const seen = new Set();
+    for (const row of rows) {
+      const cid = row.conversation_id;
+      if (seen.has(cid)) continue;
+      const kind = wa.classifyButtonPayload(row.button_payload, row.body);
+      if (kind !== 'si_asistire' && kind !== 'no_asistire' && kind !== 'escribenos') continue;
+      seen.add(cid);
+      await db.execute(
+        `UPDATE wa_conversations
+         SET last_rsvp = ?, last_rsvp_at = COALESCE(last_rsvp_at, NOW())
+         WHERE id = ? AND (last_rsvp IS NULL OR last_rsvp = '')`,
+        [kind, cid]
+      );
+    }
+  } catch (err) {
+    console.warn('[WA] backfill RSVP:', err.message);
+  }
+}
+
 async function start() {
   await db.initPool();
   await db.ensureSchema();
+  await backfillRsvpFromMessages();
   await sessionStore.onReady();
   console.log(`[wa-inbox] Sesión: ${SESSION_DAYS} días · store MySQL (wa_sessions)`);
 

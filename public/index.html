@@ -51,6 +51,9 @@
         <button type="button" class="wa-chip" data-ev-filter="pending">Pendientes <span id="evCountPending">0</span></button>
         <button type="button" class="wa-chip" data-ev-filter="sent">Enviados <span id="evCountSent">0</span></button>
         <button type="button" class="wa-chip" data-ev-filter="phone">Tel. pendiente <span id="evCountPhone">0</span></button>
+        <button type="button" class="wa-chip" data-ev-filter="si">Sí asistiré <span id="evCountSi">0</span></button>
+        <button type="button" class="wa-chip" data-ev-filter="no">No asistiré <span id="evCountNo">0</span></button>
+        <button type="button" class="wa-chip" data-ev-filter="ask">Escríbenos <span id="evCountAsk">0</span></button>
       </div>
       <div class="wa-events-wrap">
         <div id="waEventsEmpty" class="wa-events-empty hidden">
@@ -81,6 +84,7 @@
               <div class="wa-thread-head-main">
                 <div id="waThreadName" class="wa-thread-name">—</div>
                 <div id="waThreadPhone" class="wa-thread-phone">—</div>
+                <div id="waThreadRsvp" class="wa-thread-rsvp"></div>
               </div>
               <button type="button" id="btnDeleteChat" class="wa-btn-danger">Eliminar</button>
             </header>
