@@ -32,6 +32,12 @@
 
     <section id="panel-eventos" class="wa-panel" role="tabpanel">
       <div class="wa-calendar-bar">
+        <label class="wa-doctor-pick">
+          <span class="wa-doctor-pick-label">Calendario</span>
+          <div class="wa-select-shell">
+            <select id="waDoctorSelect" aria-label="Elegir doctora o calendario"></select>
+          </div>
+        </label>
         <label class="wa-cal-label">Fecha
           <input type="date" id="waCalDate" />
         </label>
@@ -40,11 +46,17 @@
         <button type="button" id="btnCalNew" class="wa-btn-sec">+ Nuevo evento</button>
         <span id="waCalResult" class="wa-cal-result"></span>
       </div>
+      <div class="wa-ev-filters" role="toolbar" aria-label="Filtrar citas">
+        <button type="button" class="wa-chip is-active" data-ev-filter="all">Todas <span id="evCountAll">0</span></button>
+        <button type="button" class="wa-chip" data-ev-filter="pending">Pendientes <span id="evCountPending">0</span></button>
+        <button type="button" class="wa-chip" data-ev-filter="sent">Enviados <span id="evCountSent">0</span></button>
+        <button type="button" class="wa-chip" data-ev-filter="phone">Tel. pendiente <span id="evCountPhone">0</span></button>
+      </div>
       <div class="wa-events-wrap">
         <div id="waEventsEmpty" class="wa-events-empty hidden">
           Cargando agenda del día…
         </div>
-        <div id="waEventsTableWrap" class="wa-doctors-grid"></div>
+        <div id="waEventsTableWrap" class="wa-patients-grid"></div>
       </div>
     </section>
 

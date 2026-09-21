@@ -9,6 +9,7 @@
   let loadedEvents = [];
   let currentTab = 'eventos';
   let calendarKeys = [];
+  let selectedCalendarKey = 'Dra_Angela';
   let sendingOne = false;
   let fcInstances = {};
   let useFullCalendar = typeof FullCalendar !== 'undefined';
@@ -52,19 +53,110 @@
     return `+${d}`;
   }
 
-  function formatTime(raw) {
-    if (!raw) return '';
-    if (typeof dayjs !== 'undefined') {
-      const d = dayjs(String(raw).replace(' ', 'T'));
-      if (!d.isValid()) return String(raw).slice(0, 16);
-      if (d.isSame(dayjs(), 'day')) return d.format('HH:mm');
-      return d.format('D MMM HH:mm');
+  /** MySQL DATETIME sin zona en Hostinger suele ser UTC → anclar Z y mostrar Colombia. */
+  function parseServerDate(raw) {
+    if (!raw) return null;
+    let s = String(raw).trim();
+    if (!s) return null;
+    if (s.includes(' ') && !s.includes('T')) s = s.replace(' ', 'T');
+    if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(s)) {
+      const d = new Date(s);
+      return Number.isNaN(d.getTime()) ? null : d;
     }
-    const d = new Date(String(raw).replace(' ', 'T'));
-    if (Number.isNaN(d.getTime())) return String(raw).slice(0, 16);
-    const sameDay = d.toDateString() === new Date().toDateString();
-    if (sameDay) return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-    return d.toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    // Sin zona: tratar como UTC (evita 14:44 → 19:44 en el chat)
+    const d = new Date(/:\d{2}$/.test(s) ? `${s}Z` : `${s}:00Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  /** Hora estilo WhatsApp Colombia: "02:44 p. m." */
+  function formatTime12(d) {
+    if (!d || Number.isNaN(d.getTime())) return '';
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Bogota',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+    const parts = {};
+    for (const p of fmt.formatToParts(d)) {
+      if (p.type !== 'literal') parts[p.type] = p.value;
+    }
+    let hour = parts.hour || '';
+    const minute = parts.minute || '00';
+    let dayPeriod = String(parts.dayPeriod || '').toLowerCase().replace(/\./g, '');
+    // en-US → am/pm; normalizar a "a. m." / "p. m."
+    if (dayPeriod.includes('a')) dayPeriod = 'a.m.';
+    else if (dayPeriod.includes('p')) dayPeriod = 'p.m.';
+    else {
+      const h24 = parseInt(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Bogota',
+          hour: '2-digit',
+          hourCycle: 'h23'
+        }).format(d),
+        10
+      );
+      dayPeriod = h24 >= 12 ? 'p.m.' : 'a.m.';
+    }
+    return `${hour}:${minute} ${dayPeriod}`;
+  }
+
+  function formatTime(raw) {
+    const d = parseServerDate(raw);
+    if (!d) return '';
+    const bogotaDay = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
+    const todayBogota = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    const time = formatTime12(d);
+    if (bogotaDay === todayBogota) return time;
+    const dayLabel = new Intl.DateTimeFormat('es-CO', {
+      timeZone: 'America/Bogota',
+      day: 'numeric',
+      month: 'short'
+    }).format(d);
+    return `${dayLabel} ${time}`;
+  }
+
+  function formatDaySep(raw) {
+    const d = parseServerDate(raw);
+    if (!d) return '';
+    const bogotaDay = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    const yesterday = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(yest);
+    if (bogotaDay === today) return 'Hoy';
+    if (bogotaDay === yesterday) return 'Ayer';
+    return new Intl.DateTimeFormat('es-CO', {
+      timeZone: 'America/Bogota',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    }).format(d);
   }
 
   function initials(name) {
@@ -130,6 +222,7 @@
     if (status && Array.isArray(status.calendars)) {
       calendarKeys = status.calendars;
       fillCalendarSelect();
+      fillDoctorSelect();
     }
   }
 
@@ -169,6 +262,35 @@
       const name = doctorLabel(k);
       return `<option value="${esc(k)}">${esc(name)}</option>`;
     }).join('');
+  }
+
+  function fillDoctorSelect() {
+    const sel = $('waDoctorSelect');
+    if (!sel) return;
+    const keys = (calendarKeys.length ? calendarKeys : DOCTORS.map((d) => d.key))
+      .slice()
+      .sort((a, b) => calendarOrderKey(a) - calendarOrderKey(b));
+    if (!keys.includes(selectedCalendarKey)) {
+      selectedCalendarKey = keys[0] || 'Dra_Angela';
+    }
+    sel.innerHTML = keys.map((k) => {
+      const meta = doctorMeta(k);
+      return `<option value="${esc(k)}">${esc(meta.name)}</option>`;
+    }).join('');
+    sel.value = selectedCalendarKey;
+    applyDoctorAccent(selectedCalendarKey);
+  }
+
+  function applyDoctorAccent(key) {
+    const meta = doctorMeta(key);
+    const wrap = $('waEventsTableWrap');
+    if (wrap) wrap.style.setProperty('--doc-accent', meta.accent);
+    const shell = document.querySelector('.wa-select-shell');
+    if (shell) shell.style.setProperty('--doc-accent', meta.accent);
+  }
+
+  function eventsForSelectedCalendar() {
+    return loadedEvents.filter((ev) => String(ev.calendar_key) === String(selectedCalendarKey));
   }
 
   function todayYmd() {
@@ -274,111 +396,88 @@
     });
   }
 
+  let eventFilter = 'all'; // all | pending | sent | phone
+
   function eventCardHtml(ev) {
     const st = analyzePhone(ev.telefono);
     const phone = st.phone || '';
     const sent = eventIsSent(ev);
     const canSend = st.ok && !sent;
+    const canResend = st.ok && sent;
     const evJson = esc(JSON.stringify(ev));
 
-    let phoneHtml;
+    let phoneLabel;
+    let phoneClass = 'wa-ev-phone-btn';
     if (st.level === 'missing') {
-      phoneHtml = '<span class="wa-ev-phone-miss">Sin teléfono</span>';
+      phoneLabel = 'Agregar teléfono';
+      phoneClass += ' is-miss';
     } else if (st.level === 'incomplete' || st.level === 'invalid') {
-      phoneHtml = `<span class="wa-ev-phone-miss">${esc(formatPhone(st.digits || ev.telefono))} · ${esc(st.message)}</span>`;
+      phoneLabel = 'Tel. incompleto';
+      phoneClass += ' is-miss';
     } else if (st.level === 'warn') {
-      phoneHtml = `<span>${esc(formatPhone(phone))}</span><span class="wa-badge wa-badge-warn">${esc(st.message)}</span>`;
+      phoneLabel = formatPhone(phone);
+      phoneClass += ' is-warn';
     } else {
-      phoneHtml = `<span>${esc(formatPhone(phone))}</span>`;
+      phoneLabel = formatPhone(phone);
     }
 
-    const sentBadge = sent ? '<span class="wa-badge wa-badge-sent">Enviado</span>' : '';
-    const badBadge = (st.level === 'incomplete' || st.level === 'invalid')
-      ? `<span class="wa-badge wa-badge-bad">${st.level === 'incomplete' ? 'Incompleto' : 'Inválido'}</span>`
-      : '';
+    const statusHtml = sent
+      ? '<span class="wa-badge wa-badge-sent">Enviado</span>'
+      : (st.ok
+        ? '<span class="wa-badge wa-badge-pending">Pendiente</span>'
+        : '<span class="wa-badge wa-badge-bad">Tel.</span>');
 
     return `<article class="wa-ev-card${sent ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}">
-      <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
-      <div>
-        <div class="wa-ev-patient-row">
-          <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
-          ${sentBadge}${badBadge}
-        </div>
-        <div class="wa-ev-phone-row">${phoneHtml}</div>
-      </div>
+      <header class="wa-ev-card-top">
+        <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
+        ${statusHtml}
+      </header>
+      <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
+      <button type="button" class="${phoneClass}" data-edit-phone='${evJson}' title="Editar teléfono">
+        <span>${esc(phoneLabel)}</span>
+        <span class="wa-ev-phone-edit">✎</span>
+      </button>
       <div class="wa-ev-actions">
-        <button type="button" class="wa-btn-link" data-edit-phone='${evJson}'>Teléfono</button>
-        <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${canSend ? '' : 'disabled'}>
-          ${sent ? 'Enviado' : 'WA'}
+        <button type="button" class="wa-btn-send" data-send-one='${evJson}' ${canSend || canResend ? '' : 'disabled'}>
+          ${sent ? 'Reenviar' : 'Enviar'}
         </button>
         <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>Chat</button>
-        <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>Eliminar</button>
+        <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'} title="Eliminar">✕</button>
       </div>
     </article>`;
   }
 
-  function toFcEvents(list) {
-    return list.map((ev) => {
-      let start = ev.start_iso || null;
-      if (!start && ev.fecha && ev.hora) {
-        // fallback: leave as all-day-ish list title only
-        start = null;
-      }
-      return {
-        id: String(ev.event_id || `${ev.calendar_key}-${ev.hora}-${ev.paciente}`),
-        title: `${ev.hora || ''} · ${ev.paciente || 'Paciente'}`.trim(),
-        start: start || undefined,
-        allDay: !start,
-        extendedProps: { raw: ev }
-      };
-    }).filter((e) => e.title);
+  function eventMatchesFilter(ev) {
+    const st = analyzePhone(ev.telefono);
+    const sent = eventIsSent(ev);
+    if (eventFilter === 'pending') return !sent && st.ok;
+    if (eventFilter === 'sent') return sent;
+    if (eventFilter === 'phone') return !st.ok;
+    return true;
   }
 
-  function mountDoctorCalendar(hostEl, doctor, events, dateYmd) {
-    if (!useFullCalendar || typeof FullCalendar === 'undefined') return false;
-    const fcEvents = events
-      .map((ev) => {
-        const start = ev.start_iso || null;
-        if (!start) return null;
-        return {
-          id: String(ev.event_id || Math.random()),
-          title: ev.paciente || 'Paciente',
-          start,
-          backgroundColor: doctor.accent,
-          borderColor: doctor.accent,
-          extendedProps: { raw: ev }
-        };
-      })
-      .filter(Boolean);
-
-    const cal = new FullCalendar.Calendar(hostEl, {
-      locale: 'es',
-      initialView: 'listDay',
-      initialDate: dateYmd,
-      headerToolbar: false,
-      height: 'auto',
-      events: fcEvents,
-      noEventsContent: 'Sin citas con hora en calendario',
-      eventContent(arg) {
-        const ev = arg.event.extendedProps.raw || {};
-        const phone = ev.telefono || '';
-        const evJson = esc(JSON.stringify(ev));
-        return {
-          html: `<div class="wa-fc-ev">
-            <strong>${esc(arg.event.title)}</strong>
-            <div class="wa-ev-phone">${phone ? esc(formatPhone(phone)) : '<span class="wa-ev-phone-miss">Sin teléfono</span>'}</div>
-            <div class="wa-ev-actions" style="margin-top:6px">
-              <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>WA</button>
-              <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>Chat</button>
-              <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>Eliminar</button>
-            </div>
-          </div>`
-        };
-      }
+  function updateFilterChips() {
+    document.querySelectorAll('[data-ev-filter]').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.getAttribute('data-ev-filter') === eventFilter);
     });
-    cal.render();
-    fcInstances[doctor.key] = cal;
-    return true;
+    const scope = eventsForSelectedCalendar();
+    const counts = { all: 0, pending: 0, sent: 0, phone: 0 };
+    scope.forEach((ev) => {
+      counts.all += 1;
+      const st = analyzePhone(ev.telefono);
+      const sent = eventIsSent(ev);
+      if (sent) counts.sent += 1;
+      else if (st.ok) counts.pending += 1;
+      if (!st.ok) counts.phone += 1;
+    });
+    const set = (id, n) => {
+      const el = $(id);
+      if (el) el.textContent = String(n);
+    };
+    set('evCountAll', counts.all);
+    set('evCountPending', counts.pending);
+    set('evCountSent', counts.sent);
+    set('evCountPhone', counts.phone);
   }
 
   function renderEvents() {
@@ -387,61 +486,35 @@
     if (!wrap) return;
 
     destroyCalendars();
+    applyDoctorAccent(selectedCalendarKey);
 
-    const dateYmd = ($('waCalDate') && $('waCalDate').value) || todayYmd();
-    const keys = (calendarKeys.length ? calendarKeys : DOCTORS.map((d) => d.key))
+    const meta = doctorMeta(selectedCalendarKey);
+    const list = eventsForSelectedCalendar()
+      .filter(eventMatchesFilter)
       .slice()
-      .sort((a, b) => calendarOrderKey(a) - calendarOrderKey(b));
+      .sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
 
-    // Always show 2x2 for the four known doctors; append any extra keys after
-    const baseKeys = DOCTORS.map((d) => d.key);
-    const orderedKeys = baseKeys.concat(keys.filter((k) => !baseKeys.includes(k)));
+    updateFilterChips();
 
-    if (empty) {
-      empty.classList.add('hidden');
-      empty.textContent = 'No hay citas para esta fecha.';
+    if (!eventsForSelectedCalendar().length) {
+      if (empty) {
+        empty.classList.remove('hidden');
+        empty.textContent = `No hay citas para ${meta.name} en esta fecha.`;
+      }
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+      return;
     }
+
+    if (empty) empty.classList.add('hidden');
     wrap.classList.remove('hidden');
 
-    const byKey = new Map();
-    loadedEvents.forEach((ev) => {
-      const key = ev.calendar_key || '_otros';
-      if (!byKey.has(key)) byKey.set(key, []);
-      byKey.get(key).push(ev);
-    });
+    if (!list.length) {
+      wrap.innerHTML = '<div class="wa-doc-empty">Sin citas en este filtro</div>';
+      return;
+    }
 
-    wrap.innerHTML = orderedKeys.map((key) => {
-      const meta = doctorMeta(key);
-      const list = (byKey.get(key) || []).slice().sort(
-        (a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))
-      );
-      const count = list.length;
-      return `<section class="wa-doc-card" style="--doc-accent:${esc(meta.accent)}" data-cal="${esc(key)}">
-        <header class="wa-doc-head">
-          <h3 class="wa-doc-title">${esc(meta.name)}</h3>
-          <span class="wa-doc-meta">${count} cita${count === 1 ? '' : 's'}</span>
-        </header>
-        <div class="wa-doc-body">
-          <div class="wa-fc-host" id="fc-${esc(key)}"></div>
-          <div class="wa-doc-fallback" id="fb-${esc(key)}"></div>
-        </div>
-      </section>`;
-    }).join('');
-
-    orderedKeys.forEach((key) => {
-      const list = (byKey.get(key) || []).slice().sort(
-        (a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))
-      );
-      const host = document.getElementById(`fc-${key}`);
-      const fallback = document.getElementById(`fb-${key}`);
-      if (host) host.innerHTML = '';
-      if (!fallback) return;
-      if (!list.length) {
-        fallback.innerHTML = '<div class="wa-doc-empty">Sin citas este día</div>';
-        return;
-      }
-      fallback.innerHTML = list.map(eventCardHtml).join('');
-    });
+    wrap.innerHTML = list.map(eventCardHtml).join('');
   }
 
   async function calLoad(send) {
@@ -559,20 +632,18 @@
     let lastDay = '';
     const parts = [];
     messages.forEach((m) => {
-      const raw = String(m.created_at || '').replace(' ', 'T');
-      const dayKey = raw.slice(0, 10);
+      const d = parseServerDate(m.created_at);
+      const dayKey = d
+        ? new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Bogota',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(d)
+        : String(m.created_at || '').slice(0, 10);
       if (dayKey && dayKey !== lastDay) {
         lastDay = dayKey;
-        let label = dayKey;
-        if (typeof dayjs !== 'undefined') {
-          const d = dayjs(raw);
-          if (d.isValid()) {
-            if (d.isSame(dayjs(), 'day')) label = 'Hoy';
-            else if (d.isSame(dayjs().subtract(1, 'day'), 'day')) label = 'Ayer';
-            else label = d.format('D MMM YYYY');
-          }
-        }
-        parts.push(`<div class="wa-day-sep">${esc(label)}</div>`);
+        parts.push(`<div class="wa-day-sep">${esc(formatDaySep(m.created_at))}</div>`);
       }
       const dir = m.direction === 'out' ? 'out' : 'in';
       const text = displayMessageBody(m);
@@ -816,6 +887,8 @@
     const bd = $('waModalBackdrop');
     if (!bd) return;
     fillCalendarSelect();
+    const neCal = $('neCalendar');
+    if (neCal && selectedCalendarKey) neCal.value = selectedCalendarKey;
     const dateEl = $('waCalDate');
     const neFecha = $('neFecha');
     if (neFecha) neFecha.value = (dateEl && dateEl.value) || todayYmd();
@@ -1062,11 +1135,53 @@
   }
   const btnCalLoad = $('btnCalLoad');
   if (btnCalLoad) btnCalLoad.addEventListener('click', () => calLoad(false));
-  const btnCalSend = $('btnCalSend');
-  if (btnCalSend) btnCalSend.addEventListener('click', () => {
-    if (!window.confirm('¿Enviar recordatorios WhatsApp a todos los eventos de esa fecha con teléfono?')) return;
-    calLoad(true);
+  document.querySelectorAll('[data-ev-filter]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      eventFilter = btn.getAttribute('data-ev-filter') || 'all';
+      renderEvents();
+    });
   });
+  const btnCalSend = $('btnCalSend');
+  if (btnCalSend) btnCalSend.addEventListener('click', async () => {
+    const meta = doctorMeta(selectedCalendarKey);
+    const pending = eventsForSelectedCalendar().filter((ev) => {
+      const st = analyzePhone(ev.telefono);
+      return st.ok && !eventIsSent(ev);
+    });
+    if (!pending.length) {
+      window.alert(`No hay citas pendientes con teléfono válido en ${meta.name}.`);
+      return;
+    }
+    if (!window.confirm(`¿Enviar recordatorios a ${pending.length} cita(s) de ${meta.name}?`)) return;
+    const resultEl = $('waCalResult');
+    if (resultEl) resultEl.textContent = 'Enviando…';
+    btnCalSend.disabled = true;
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (const ev of pending) {
+        try {
+          await sendOneEvent(ev, { openChatAfter: false });
+          ok += 1;
+        } catch (_) {
+          fail += 1;
+        }
+      }
+      if (resultEl) resultEl.textContent = `Enviados ${ok}${fail ? ` · fallidos ${fail}` : ''} · ${meta.name}`;
+    } finally {
+      btnCalSend.disabled = false;
+    }
+  });
+
+  const doctorSel = $('waDoctorSelect');
+  if (doctorSel) {
+    fillDoctorSelect();
+    doctorSel.addEventListener('change', () => {
+      selectedCalendarKey = doctorSel.value || 'Dra_Angela';
+      applyDoctorAccent(selectedCalendarKey);
+      renderEvents();
+    });
+  }
 
   (async function init() {
     await api('/api/sesion');

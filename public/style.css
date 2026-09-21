@@ -296,20 +296,251 @@ body {
   border-radius: var(--radius);
 }
 
-.wa-doctors-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(280px, 1fr));
-  gap: 14px;
-  min-height: min(70vh, 720px);
+.wa-ev-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
-@media (max-width: 960px) {
-  .wa-doctors-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: none;
-    min-height: 0;
+.wa-chip {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wa-chip span {
+  min-width: 1.2em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef3f0;
+  font-size: 0.7rem;
+}
+
+.wa-chip.is-active {
+  color: var(--green);
+  border-color: rgba(31, 107, 69, 0.35);
+  background: var(--green-soft);
+}
+
+.wa-chip.is-active span {
+  background: #fff;
+  color: var(--green);
+}
+
+.wa-doctor-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: min(260px, 100%);
+}
+
+.wa-doctor-pick-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wa-select-shell {
+  position: relative;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(19, 38, 28, 0.04);
+  overflow: hidden;
+}
+
+.wa-select-shell::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--doc-accent, var(--green));
+}
+
+.wa-select-shell::after {
+  content: '▾';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+  font-size: 0.85rem;
+}
+
+.wa-select-shell select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 11px 36px 11px 16px;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.wa-select-shell select:focus {
+  outline: none;
+}
+
+.wa-patients-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+@media (max-width: 1200px) {
+  .wa-patients-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+
+@media (max-width: 900px) {
+  .wa-patients-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .wa-patients-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wa-ev-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+  min-height: 150px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wa-ev-card:hover {
+  border-color: rgba(31, 107, 69, 0.28);
+  box-shadow: 0 4px 14px rgba(19, 38, 28, 0.06);
+}
+
+.wa-ev-card.is-sent {
+  background: rgba(216, 238, 225, 0.45);
+  border-color: rgba(31, 107, 69, 0.22);
+}
+
+.wa-ev-card.is-phone-bad {
+  background: rgba(253, 232, 232, 0.45);
+  border-color: rgba(163, 32, 32, 0.2);
+}
+
+.wa-ev-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.wa-ev-time {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--doc-accent, var(--green));
+  line-height: 1.2;
+}
+
+.wa-ev-patient {
+  font-weight: 750;
+  font-size: 0.92rem;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.4em;
+}
+
+.wa-ev-phone-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  border: 1px dashed rgba(26, 46, 34, 0.2);
+  background: #f7faf8;
+  border-radius: 10px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wa-ev-phone-btn:hover {
+  border-style: solid;
+  border-color: var(--green);
+}
+
+.wa-ev-phone-btn.is-miss {
+  color: #a32020;
+  background: #fff5f5;
+  border-color: rgba(163, 32, 32, 0.3);
+}
+
+.wa-ev-phone-btn.is-warn {
+  color: #8a5a00;
+  background: #fff8e8;
+}
+
+.wa-ev-phone-edit {
+  color: var(--green);
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.wa-ev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.wa-btn-send {
+  border: none;
+  background: var(--green);
+  color: #fff;
+  border-radius: 9px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 750;
+  cursor: pointer;
+  flex: 1;
+  min-width: 72px;
+}
+
+.wa-btn-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .wa-doc-card {
@@ -364,63 +595,6 @@ body {
   font-size: 0.86rem;
 }
 
-.wa-ev-card {
-  display: grid;
-  grid-template-columns: 64px 1fr auto;
-  gap: 10px;
-  align-items: start;
-  padding: 10px;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.wa-ev-card:hover {
-  background: #f5faf7;
-  border-color: var(--line);
-}
-
-.wa-ev-card.is-sent {
-  background: rgba(216, 238, 225, 0.35);
-}
-
-.wa-ev-card.is-phone-bad {
-  background: rgba(253, 232, 232, 0.35);
-}
-
-.wa-ev-time {
-  font-size: 0.78rem;
-  font-weight: 800;
-  color: var(--doc-accent, var(--green));
-  padding-top: 2px;
-}
-
-.wa-ev-patient {
-  font-weight: 700;
-  font-size: 0.9rem;
-  line-height: 1.25;
-}
-
-.wa-ev-phone {
-  margin-top: 2px;
-  font-size: 0.76rem;
-  color: var(--muted);
-}
-
-.wa-ev-phone-miss {
-  color: #a32020;
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-.wa-ev-phone-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 3px;
-}
-
 .wa-badge {
   display: inline-flex;
   align-items: center;
@@ -438,6 +612,11 @@ body {
   color: #0f5132;
 }
 
+.wa-badge-pending {
+  background: #e8eef8;
+  color: #1d4ed8;
+}
+
 .wa-badge-warn {
   background: #fff3d6;
   color: #8a5a00;
@@ -448,27 +627,13 @@ body {
   color: #a32020;
 }
 
-.wa-ev-patient-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.wa-ev-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  justify-content: flex-end;
-}
-
 .wa-btn-link {
   border: 1px solid var(--line);
   background: #fff;
   border-radius: 8px;
-  padding: 4px 8px;
+  padding: 7px 10px;
   font: inherit;
-  font-size: 0.7rem;
+  font-size: 0.74rem;
   font-weight: 700;
   cursor: pointer;
   color: var(--green);
