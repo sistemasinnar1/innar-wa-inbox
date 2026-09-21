@@ -655,15 +655,67 @@ body {
   margin-top: -2px;
 }
 
+.wa-ev-attend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.wa-attend-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 4px;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.wa-attend-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.wa-attend-btn.is-ok:hover:not(:disabled),
+.wa-attend-btn.is-ok.is-active {
+  background: #1f6b45;
+  border-color: #1f6b45;
+  color: #fff;
+}
+
+.wa-attend-btn.is-no:hover:not(:disabled),
+.wa-attend-btn.is-no.is-active {
+  background: #c0392b;
+  border-color: #c0392b;
+  color: #fff;
+}
+
+.wa-ev-card.is-confirmado {
+  background: #d8f3e3;
+  border-color: rgba(15, 81, 50, 0.45);
+  box-shadow: inset 4px 0 0 #1f6b45;
+}
+
+.wa-ev-card.is-cancelado {
+  background: #fde2e2;
+  border-color: rgba(163, 32, 32, 0.4);
+  box-shadow: inset 4px 0 0 #c0392b;
+}
+
 .wa-ev-card.is-rsvp-si {
-  border-color: rgba(15, 81, 50, 0.35);
-  box-shadow: inset 3px 0 0 #1f6b45;
+  background: #d8f3e3;
+  border-color: rgba(15, 81, 50, 0.45);
+  box-shadow: inset 4px 0 0 #1f6b45;
 }
 
 .wa-ev-card.is-rsvp-no {
-  border-color: rgba(163, 32, 32, 0.35);
-  box-shadow: inset 3px 0 0 #c0392b;
-  background: rgba(253, 232, 232, 0.35);
+  background: #fde2e2;
+  border-color: rgba(163, 32, 32, 0.4);
+  box-shadow: inset 4px 0 0 #c0392b;
 }
 
 .wa-btn-link {

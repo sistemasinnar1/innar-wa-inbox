@@ -459,6 +459,25 @@ app.patch('/api/calendars/events/phone', requireAuth, async (req, res) => {
   }
 });
 
+/** Marca cita como confirmada / cancelada (o limpia el estado). */
+app.patch('/api/calendars/events/attendance', requireAuth, async (req, res) => {
+  try {
+    if (!cal.googleConfigured()) {
+      return res.status(503).json({ error: 'Google Calendar no configurado' });
+    }
+    const b = req.body || {};
+    const updated = await cal.updateEventAttendance({
+      calendarKey: String(b.calendar_key || '').trim(),
+      eventId: String(b.event_id || '').trim(),
+      status: b.status
+    });
+    res.json({ event: updated });
+  } catch (e) {
+    const status = e.code === 'UNKNOWN_CALENDAR' || e.code === 'NO_EVENT_ID' ? 400 : 500;
+    res.status(status).json({ error: e.message, code: e.code });
+  }
+});
+
 /** Elimina evento de Google Calendar. */
 app.delete('/api/calendars/events', requireAuth, async (req, res) => {
   try {

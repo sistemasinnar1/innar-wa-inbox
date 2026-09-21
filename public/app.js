@@ -447,14 +447,42 @@
     return '';
   }
 
+  /** Estado visual: confirmado | cancelado | null (manual o respuesta WhatsApp). */
+  function eventAttendance(ev) {
+    const rsvp = rsvpForPhone((ev && (analyzePhone(ev.telefono).phone || ev.telefono)) || '');
+    if (rsvp === 'si_asistire') return 'confirmado';
+    if (rsvp === 'no_asistire') return 'cancelado';
+    const manual = String((ev && ev.attendance) || '').toLowerCase();
+    if (manual === 'confirmado' || manual === 'cancelado') return manual;
+    return null;
+  }
+
+  function attendanceBadgeHtml(status, rsvp) {
+    if (status === 'confirmado') {
+      return '<span class="wa-badge wa-badge-si">CONFIRMADO</span>';
+    }
+    if (status === 'cancelado') {
+      return '<span class="wa-badge wa-badge-no">CANCELADO</span>';
+    }
+    return rsvpBadgeHtml(rsvp);
+  }
+
   function eventCardHtml(ev) {
     const st = analyzePhone(ev.telefono);
     const phone = st.phone || '';
     const sent = eventIsSent(ev);
     const canSend = st.ok && !sent;
     const canResend = st.ok && sent;
-    const evJson = esc(JSON.stringify(ev));
+    const evJson = esc(JSON.stringify({
+      event_id: ev.event_id,
+      calendar_key: ev.calendar_key,
+      paciente: ev.paciente,
+      telefono: ev.telefono,
+      attendance: ev.attendance || null
+    }));
     const rsvp = rsvpForPhone(phone || ev.telefono);
+    const attendance = eventAttendance(ev);
+    const canToggle = !!ev.event_id;
 
     let phoneLabel;
     let phoneClass = 'wa-ev-phone-btn';
@@ -477,15 +505,26 @@
         ? '<span class="wa-badge wa-badge-pending">Pendiente</span>'
         : '<span class="wa-badge wa-badge-bad">Tel.</span>');
 
-    const rsvpHtml = rsvpBadgeHtml(rsvp);
+    const attendanceHtml = attendanceBadgeHtml(attendance, rsvp);
+    const cardState = attendance === 'confirmado'
+      ? ' is-confirmado'
+      : (attendance === 'cancelado' ? ' is-cancelado' : '');
 
-    return `<article class="wa-ev-card${sent ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}${rsvp === 'no_asistire' ? ' is-rsvp-no' : ''}${rsvp === 'si_asistire' ? ' is-rsvp-si' : ''}">
+    return `<article class="wa-ev-card${sent && !attendance ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}${cardState}">
       <header class="wa-ev-card-top">
         <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
         ${statusHtml}
       </header>
       <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
-      ${rsvpHtml ? `<div class="wa-ev-rsvp">${rsvpHtml}</div>` : ''}
+      ${attendanceHtml ? `<div class="wa-ev-rsvp">${attendanceHtml}</div>` : ''}
+      <div class="wa-ev-attend">
+        <button type="button" class="wa-attend-btn is-ok${attendance === 'confirmado' ? ' is-active' : ''}"
+          data-set-attendance="confirmado" data-event='${evJson}' ${canToggle ? '' : 'disabled'}
+          title="Marcar como confirmado">CONFIRMADO</button>
+        <button type="button" class="wa-attend-btn is-no${attendance === 'cancelado' ? ' is-active' : ''}"
+          data-set-attendance="cancelado" data-event='${evJson}' ${canToggle ? '' : 'disabled'}
+          title="Marcar como cancelado">CANCELADO</button>
+      </div>
       <button type="button" class="${phoneClass}" data-edit-phone='${evJson}' title="Editar teléfono">
         <span>${esc(phoneLabel)}</span>
         <span class="wa-ev-phone-edit">✎</span>
@@ -503,12 +542,13 @@
   function eventMatchesFilter(ev) {
     const st = analyzePhone(ev.telefono);
     const sent = eventIsSent(ev);
+    const attendance = eventAttendance(ev);
     const rsvp = rsvpForPhone(st.phone || ev.telefono);
     if (eventFilter === 'pending') return !sent && st.ok;
     if (eventFilter === 'sent') return sent;
     if (eventFilter === 'phone') return !st.ok;
-    if (eventFilter === 'si') return rsvp === 'si_asistire';
-    if (eventFilter === 'no') return rsvp === 'no_asistire';
+    if (eventFilter === 'si' || eventFilter === 'confirmado') return attendance === 'confirmado';
+    if (eventFilter === 'no' || eventFilter === 'cancelado') return attendance === 'cancelado';
     if (eventFilter === 'ask') return rsvp === 'escribenos';
     return true;
   }
@@ -523,13 +563,14 @@
       counts.all += 1;
       const st = analyzePhone(ev.telefono);
       const sent = eventIsSent(ev);
+      const attendance = eventAttendance(ev);
       const rsvp = rsvpForPhone(st.phone || ev.telefono);
       if (sent) counts.sent += 1;
       else if (st.ok) counts.pending += 1;
       if (!st.ok) counts.phone += 1;
-      if (rsvp === 'si_asistire') counts.si += 1;
-      else if (rsvp === 'no_asistire') counts.no += 1;
-      else if (rsvp === 'escribenos') counts.ask += 1;
+      if (attendance === 'confirmado') counts.si += 1;
+      else if (attendance === 'cancelado') counts.no += 1;
+      if (rsvp === 'escribenos') counts.ask += 1;
     });
     const set = (id, n) => {
       const el = $(id);
@@ -852,6 +893,36 @@
 
   let phoneEditTarget = null;
 
+  async function setEventAttendance(ev, nextStatus) {
+    if (!ev || !ev.event_id || !ev.calendar_key) {
+      window.alert('Este evento no se puede actualizar en el calendario.');
+      return;
+    }
+    const current = eventAttendance(ev);
+    // Si ya está en ese estado (manual o por WhatsApp), pulsar de nuevo limpia solo el manual
+    const status = current === nextStatus && String(ev.attendance || '') === nextStatus
+      ? null
+      : nextStatus;
+    try {
+      const data = await api('/api/calendars/events/attendance', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          calendar_key: ev.calendar_key,
+          event_id: ev.event_id,
+          status
+        })
+      });
+      if (data.event) {
+        patchLoadedEvent({ ...data.event, _enviado: ev._enviado });
+      } else {
+        patchLoadedEvent({ ...ev, attendance: status });
+      }
+      renderEvents();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  }
+
   function openPhoneEdit(ev) {
     phoneEditTarget = ev;
     const bd = $('waPhoneModalBackdrop');
@@ -1098,11 +1169,24 @@
   const eventsWrap = $('waEventsTableWrap');
   if (eventsWrap) {
     eventsWrap.addEventListener('click', (ev) => {
+      const attendBtn = ev.target.closest('[data-set-attendance]');
+      if (attendBtn && !attendBtn.disabled) {
+        let eventObj = null;
+        try { eventObj = JSON.parse(attendBtn.getAttribute('data-event')); } catch (_) {}
+        if (!eventObj) return;
+        const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
+        const next = attendBtn.getAttribute('data-set-attendance');
+        setEventAttendance(live, next).catch((e) => window.alert(e.message));
+        return;
+      }
       const editBtn = ev.target.closest('[data-edit-phone]');
       if (editBtn) {
         let eventObj = null;
         try { eventObj = JSON.parse(editBtn.getAttribute('data-edit-phone')); } catch (_) {}
-        if (eventObj) openPhoneEdit(eventObj);
+        if (eventObj) {
+          const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
+          openPhoneEdit(live);
+        }
         return;
       }
       const delBtn = ev.target.closest('[data-delete-event]');
@@ -1110,7 +1194,8 @@
         let eventObj = null;
         try { eventObj = JSON.parse(delBtn.getAttribute('data-delete-event')); } catch (_) {}
         if (!eventObj) return;
-        deleteEvent(eventObj).catch((e) => {
+        const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
+        deleteEvent(live).catch((e) => {
           window.alert(e.hint ? `${e.message}\n${e.hint}` : e.message);
         });
         return;
