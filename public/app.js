@@ -49,6 +49,7 @@
     if (!res.ok) {
       const err = new Error(data.error || `HTTP ${res.status}`);
       err.hint = data.hint;
+      err.code = data.code;
       throw err;
     }
     return data;
@@ -58,11 +59,72 @@
     const el = $('waStatusPill');
     if (!el) return;
     if (status && status.configured) {
-      el.textContent = status.gasWebhook ? 'Twilio OK · Sheet OK' : 'Twilio OK · Sheet sin URL';
-      el.className = status.gasWebhook ? 'wa-status-pill is-ok' : 'wa-status-pill is-warn';
+      const bits = ['Twilio OK'];
+      if (status.googleCalendar) bits.push('Calendar OK');
+      else bits.push('Calendar off');
+      if (status.gasWebhook) bits.push('Sheet OK');
+      el.textContent = bits.join(' · ');
+      el.className = status.googleCalendar ? 'wa-status-pill is-ok' : 'wa-status-pill is-warn';
     } else {
       el.textContent = 'Twilio no configurado';
       el.className = 'wa-status-pill is-warn';
+    }
+  }
+
+  function todayYmd() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  async function calLoad(send) {
+    const dateEl = $('waCalDate');
+    const resultEl = $('waCalResult');
+    const btnLoad = $('btnCalLoad');
+    const btnSend = $('btnCalSend');
+    const date = dateEl && dateEl.value;
+    if (!date) {
+      window.alert('Elija una fecha');
+      return;
+    }
+    if (btnLoad) btnLoad.disabled = true;
+    if (btnSend) btnSend.disabled = true;
+    if (resultEl) resultEl.textContent = send ? 'Enviando…' : 'Cargando…';
+    try {
+      const data = await api('/api/calendars/sync', {
+        method: 'POST',
+        body: JSON.stringify({ date, send: !!send })
+      });
+      let msg = `${data.total_events || 0} eventos · ${data.with_phone || 0} con teléfono`;
+      if (send) {
+        msg += ` · enviados ${data.sent_ok || 0}`;
+        if (data.sent_fail) msg += ` · fallidos ${data.sent_fail}`;
+      }
+      if (resultEl) resultEl.textContent = msg;
+      if (send) await loadConversations();
+      if (!send && data.calendars) {
+        const errs = data.calendars.filter((c) => c.error);
+        if (errs.length) {
+          window.alert('Algunos calendarios fallaron:\n' + errs.map((e) => `${e.calendar_key}: ${e.error}`).join('\n'));
+        }
+      }
+      if (send && data.send_results) {
+        const fails = data.send_results.filter((r) => !r.ok);
+        if (fails.length) {
+          window.alert(
+            'Algunos no se enviaron:\n'
+            + fails.slice(0, 8).map((f) => `${f.event && f.event.paciente}: ${f.error}`).join('\n')
+          );
+        }
+      }
+    } catch (err) {
+      if (resultEl) resultEl.textContent = '';
+      window.alert(err.hint ? `${err.message}\n${err.hint}` : err.message);
+    } finally {
+      if (btnLoad) btnLoad.disabled = false;
+      if (btnSend) btnSend.disabled = false;
     }
   }
 
@@ -216,6 +278,16 @@
   $('btnLogout').addEventListener('click', async () => {
     await api('/api/logout', { method: 'POST', body: '{}' }).catch(() => {});
     location.href = '/login';
+  });
+
+  const dateInput = $('waCalDate');
+  if (dateInput) dateInput.value = todayYmd();
+  const btnCalLoad = $('btnCalLoad');
+  if (btnCalLoad) btnCalLoad.addEventListener('click', () => calLoad(false));
+  const btnCalSend = $('btnCalSend');
+  if (btnCalSend) btnCalSend.addEventListener('click', () => {
+    if (!window.confirm('¿Enviar recordatorios WhatsApp a todos los eventos de esa fecha con teléfono?')) return;
+    calLoad(true);
   });
 
   (async function init() {

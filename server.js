@@ -11,6 +11,9 @@ const { Server } = require('socket.io');
 
 const db = require('./lib/db');
 const wa = require('./lib/twilio');
+const cal = require('./lib/google-calendar');
+const reminders = require('./lib/reminders');
+const schedule = require('node-schedule');
 
 const PORT = parseInt(process.env.PORT || '7090', 10) || 7090;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -260,8 +263,69 @@ app.get('/api/status', requireAuth, (req, res) => {
   res.json({
     configured: wa.twilioConfigured(),
     gasWebhook: !!String(process.env.GAS_WEBHOOK_URL || '').trim(),
-    validateSignature: wa.shouldValidateSignature()
+    validateSignature: wa.shouldValidateSignature(),
+    googleCalendar: cal.googleConfigured(),
+    contentSid: !!String(process.env.TWILIO_CONTENT_SID || '').trim(),
+    calendars: Object.keys(cal.loadCalendarios())
   });
+});
+
+/** Eventos Google Calendar del día (YYYY-MM-DD). */
+app.get('/api/calendars/events', requireAuth, async (req, res) => {
+  try {
+    if (!cal.googleConfigured()) {
+      return res.status(503).json({
+        error: 'Google Calendar no configurado',
+        hint: 'Defina GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_KEY y comparta los calendarios con esa cuenta de servicio.'
+      });
+    }
+    const date = String(req.query.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Use date=YYYY-MM-DD' });
+    }
+    const listed = await cal.listEventsForDate(date);
+    res.json(listed);
+  } catch (e) {
+    res.status(500).json({ error: e.message, code: e.code });
+  }
+});
+
+/**
+ * Carga eventos y opcionalmente envía recordatorios (plantilla Twilio).
+ * Body: { date: 'YYYY-MM-DD', send: true|false }
+ */
+app.post('/api/calendars/sync', requireAuth, async (req, res) => {
+  try {
+    if (!cal.googleConfigured()) {
+      return res.status(503).json({ error: 'Google Calendar no configurado' });
+    }
+    const date = String(req.body?.date || '').trim();
+    const send = req.body?.send === true || req.body?.send === 'true' || req.body?.send === 1;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Use date=YYYY-MM-DD' });
+    }
+    if (send && !String(process.env.TWILIO_CONTENT_SID || '').trim()) {
+      return res.status(503).json({ error: 'Falta TWILIO_CONTENT_SID para enviar plantillas' });
+    }
+    const result = await reminders.loadAndOptionallySend(date, {
+      send,
+      emit: emitWa
+    });
+    const sentOk = (result.sendResults || []).filter((r) => r.ok).length;
+    const sentFail = (result.sendResults || []).filter((r) => !r.ok).length;
+    res.json({
+      date,
+      total_events: result.listed.flat.length,
+      with_phone: result.listed.flat.filter((e) => e.telefono).length,
+      send,
+      sent_ok: sentOk,
+      sent_fail: sentFail,
+      calendars: result.listed.calendars,
+      send_results: result.sendResults
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, code: e.code });
+  }
 });
 
 app.get('/api/conversations', requireAuth, async (req, res) => {
@@ -370,6 +434,27 @@ app.use(express.static(PUBLIC_DIR));
 async function start() {
   await db.initPool();
   await db.ensureSchema();
+
+  // Cron opcional: RECORDATORIO_CRON="0 7 * * *" (7:00 America/Bogota aprox. si el host está en UTC-5)
+  const cronExpr = String(process.env.RECORDATORIO_CRON || '').trim();
+  if (cronExpr && cal.googleConfigured()) {
+    schedule.scheduleJob(cronExpr, async () => {
+      try {
+        const ymd = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Bogota',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(new Date());
+        console.log('[WA] Cron recordatorios', ymd);
+        await reminders.loadAndOptionallySend(ymd, { send: true, emit: emitWa });
+      } catch (err) {
+        console.error('[WA] Cron falló:', err.message);
+      }
+    });
+    console.log('[wa-inbox] Cron recordatorios:', cronExpr);
+  }
+
   server.listen(PORT, () => {
     console.log(`[wa-inbox] http://localhost:${PORT}`);
   });

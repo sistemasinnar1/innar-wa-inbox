@@ -1,7 +1,11 @@
 # Bandeja WhatsApp (app aparte de Innar)
 
-Sistema Node **independiente** para atender el WhatsApp de Twilio.  
-No forma parte del menú de Innar; se despliega solo en un **subdominio**.
+Sistema Node **independiente** para:
+- atender el WhatsApp de Twilio (bandeja),
+- leer **Google Calendar** de las doctoras,
+- enviar recordatorios (plantilla Twilio) y dejarlos en el chat.
+
+No forma parte del menú de Innar; se despliega en un **subdominio**.
 
 ## URL sugerida
 
@@ -11,42 +15,44 @@ Webhook Twilio:
 
 `https://wa.neurocienciasnarino.com/api/webhook`
 
-## Hostinger (pasos)
+## Flujo calendario → chat
 
-1. En DNS del dominio `neurocienciasnarino.com`, cree un subdominio `wa` (o el nombre que elijan) apuntando al hosting.
-2. hPanel → **Advanced → Node.js** → **Create application**:
-   - Application root: carpeta donde suban **solo** `wa-inbox/` (este directorio)
-   - Application URL: el subdominio `wa.neurocienciasnarino.com`
-   - Startup file: `server.js`
-   - Node 18+
-3. Suban **únicamente** el contenido de `wa-inbox/` (no hace falta subir Innar completo).
-4. En el servidor: `npm install`
-5. Variables de entorno (panel o `.env`): copie desde `.env.example`
-   - `WA_USER` / `WA_PASSWORD` (login fijo)
-   - Twilio + `GAS_WEBHOOK_URL` + MySQL
-   - `FRONTEND_URL` y `TWILIO_WEBHOOK_URL` con el subdominio HTTPS
-6. Reinicien la Node App.
-7. Twilio → Messaging Service **Innar** → Incoming webhook →  
-   `https://wa.neurocienciasnarino.com/api/webhook` (HTTP POST).
-8. Abran `https://wa.neurocienciasnarino.com/login` con el usuario/clave del `.env`.
+1. En la bandeja eligen fecha → **Cargar eventos** (lee Google Calendar).
+2. **Enviar recordatorios** → plantilla Twilio a cada paciente con teléfono en el título del evento.
+3. Cada envío crea/actualiza la conversación en la bandeja (queda como mensaje saliente).
+4. Si el paciente responde Sí/No o texto → entra por el webhook y se ve en el mismo chat.
+5. Sí/No también se reenvía a Apps Script (`GAS_WEBHOOK_URL`) si quieren seguir llenando el Sheet.
 
-## Local (prueba)
+## Google Calendar (obligatorio para cargar/enviar)
+
+1. [Google Cloud Console](https://console.cloud.google.com) → proyecto → habilitar **Google Calendar API**.
+2. Crear **cuenta de servicio** → descargar JSON.
+3. En Hostinger / `.env`:
+   - `GOOGLE_CLIENT_EMAIL` = `client_email` del JSON
+   - `GOOGLE_PRIVATE_KEY` = `private_key` del JSON (con `\n`)
+4. En cada calendario de Google (Angela, Karen, Adriana, Valentina):
+   **Compartir** con ese `client_email` → permiso **Ver todos los detalles de los eventos**.
+5. `TWILIO_CONTENT_SID` = plantilla Approved (variables 1–5 como en el Script).
+
+Sin compartir los calendarios, la API devolverá error de acceso.
+
+## Hostinger
+
+1. Subdominio `wa.neurocienciasnarino.com` + Node.js App desde GitHub (`innar-wa-inbox`).
+2. Startup: `server.js` · npm · root `./`.
+3. Variables: ver `.env.example` (Twilio + MySQL + login + Google + ContentSid).
+4. Reiniciar app.
+5. Messaging Service → webhook `https://wa.neurocienciasnarino.com/api/webhook`.
+
+## Apps Script
+
+Pueden **dejar de enviar** desde Sheets (para no duplicar). El Sheet puede seguir solo como respaldo de confirmaciones vía `GAS_WEBHOOK_URL`.
+
+## Local
 
 ```bash
-cd wa-inbox
+cd innar-wa-inbox
 cp .env.example .env
-# editar .env
 npm install
 npm start
 ```
-
-Abra `http://localhost:7090/login`.
-
-## Qué sube / qué no
-
-| Subir a Hostinger (esta app) | Queda en local / Innar |
-|------------------------------|-------------------------|
-| Carpeta `wa-inbox/` completa | Agenda, recibos, XAMPP Innar |
-| Variables Twilio en **esta** app | No hace falta menú WhatsApp en Innar |
-
-Los recordatorios de citas siguen saliendo desde **Apps Script + Sheet**. Esta app solo recibe respuestas y chat libre.

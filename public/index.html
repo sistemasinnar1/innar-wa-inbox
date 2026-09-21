@@ -11,11 +11,19 @@
     <header class="wa-topbar">
       <div class="wa-topbar-titles">
         <h1 class="wa-title">WhatsApp</h1>
-        <p class="wa-subtitle">Número API Twilio · Fuera de 24 h a veces solo plantillas</p>
+        <p class="wa-subtitle">Número API Twilio · Calendario Google · Fuera de 24 h a veces solo plantillas</p>
       </div>
       <div id="waStatusPill" class="wa-status-pill">—</div>
       <button type="button" id="btnLogout" class="wa-btn-back">Salir</button>
     </header>
+    <div class="wa-calendar-bar">
+      <label class="wa-cal-label">Citas del día
+        <input type="date" id="waCalDate" />
+      </label>
+      <button type="button" id="btnCalLoad" class="wa-btn-sec">Cargar eventos</button>
+      <button type="button" id="btnCalSend" class="wa-btn-prim">Enviar recordatorios</button>
+      <span id="waCalResult" class="wa-cal-result"></span>
+    </div>
     <div class="wa-layout">
       <aside class="wa-sidebar">
         <div class="wa-search-wrap">

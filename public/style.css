@@ -115,6 +115,62 @@ body {
   font-size: 0.85rem;
 }
 
+.wa-calendar-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(26, 46, 34, 0.08);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.wa-cal-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.wa-cal-label input {
+  border: 1px solid rgba(26, 46, 34, 0.14);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.wa-btn-sec, .wa-btn-prim {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.wa-btn-sec {
+  background: #fff;
+  border: 1px solid rgba(26, 46, 34, 0.14);
+  color: var(--ink);
+}
+
+.wa-btn-prim {
+  background: var(--green);
+  color: #fff;
+}
+
+.wa-btn-prim:disabled, .wa-btn-sec:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wa-cal-result {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .wa-layout {
   flex: 1;
   display: grid;
