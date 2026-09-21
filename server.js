@@ -14,12 +14,16 @@ const wa = require('./lib/twilio');
 const cal = require('./lib/google-calendar');
 const reminders = require('./lib/reminders');
 const schedule = require('node-schedule');
+const MySQLStore = require('express-mysql-session')(session);
 
 const PORT = parseInt(process.env.PORT || '7090', 10) || 7090;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const WA_USER = String(process.env.WA_USER || '').trim();
 const WA_PASSWORD = String(process.env.WA_PASSWORD || '');
+
+const SESSION_DAYS = Math.max(1, Math.min(90, parseInt(process.env.SESSION_DAYS || '30', 10) || 30));
+const SESSION_MS = SESSION_DAYS * 24 * 60 * 60 * 1000;
 
 if (!WA_USER || !WA_PASSWORD) {
   console.warn('[WA] Defina WA_USER y WA_PASSWORD en .env antes de producción');
@@ -28,16 +32,47 @@ if (!WA_USER || !WA_PASSWORD) {
 const app = express();
 const server = http.createServer(app);
 
+function cookieSecure() {
+  const flag = String(process.env.SESSION_COOKIE_SECURE || '').toLowerCase();
+  if (flag === '0' || flag === 'false' || flag === 'no') return false;
+  if (flag === '1' || flag === 'true' || flag === 'yes') return true;
+  const front = String(process.env.FRONTEND_URL || '').toLowerCase();
+  if (front.startsWith('https://')) return true;
+  return process.env.NODE_ENV === 'production';
+}
+
+const sessionStore = new MySQLStore({
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '3306', 10) || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'wa_inbox',
+  clearExpired: true,
+  checkExpirationInterval: 15 * 60 * 1000,
+  expiration: SESSION_MS,
+  createDatabaseTable: true,
+  schema: {
+    tableName: 'wa_sessions',
+    columnNames: {
+      session_id: 'session_id',
+      expires: 'expires',
+      data: 'data'
+    }
+  }
+});
+
 const sessionMiddleware = session({
   name: 'wa_inbox_sid',
   secret: process.env.SESSION_SECRET || 'cambiar-session-secret-wa-inbox',
   resave: false,
   saveUninitialized: false,
+  rolling: true,
+  store: sessionStore,
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production' || process.env.SESSION_COOKIE_SECURE === 'true',
-    maxAge: 12 * 60 * 60 * 1000
+    secure: cookieSecure(),
+    maxAge: SESSION_MS
   }
 });
 
@@ -524,6 +559,8 @@ app.use(express.static(PUBLIC_DIR));
 async function start() {
   await db.initPool();
   await db.ensureSchema();
+  await sessionStore.onReady();
+  console.log(`[wa-inbox] Sesión: ${SESSION_DAYS} días · store MySQL (wa_sessions)`);
 
   // Cron opcional: RECORDATORIO_CRON="0 7 * * *" (7:00 America/Bogota aprox. si el host está en UTC-5)
   const cronExpr = String(process.env.RECORDATORIO_CRON || '').trim();

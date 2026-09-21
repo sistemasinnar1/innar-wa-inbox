@@ -4,70 +4,79 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>WhatsApp — Innar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&family=Literata:opsz,wght@7..72,500;7..72,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="wa-page">
     <header class="wa-topbar">
-      <div class="wa-topbar-titles">
-        <h1 class="wa-title">WhatsApp</h1>
-        <p class="wa-subtitle">Calendario Google · Chat Twilio</p>
+      <div class="wa-brand">
+        <span class="wa-brand-mark" aria-hidden="true">IN</span>
+        <div class="wa-topbar-titles">
+          <h1 class="wa-title">Innar WhatsApp</h1>
+          <p class="wa-subtitle">Agenda · Recordatorios · Chat</p>
+        </div>
       </div>
       <div id="waStatusPill" class="wa-status-pill">—</div>
-      <button type="button" id="btnLogout" class="wa-btn-back">Salir</button>
+      <button type="button" id="btnLogout" class="wa-btn-ghost">Salir</button>
     </header>
 
     <nav class="wa-tabs" role="tablist">
-      <button type="button" class="wa-tab is-active" data-tab="eventos" role="tab" aria-selected="true">Eventos</button>
+      <button type="button" class="wa-tab is-active" data-tab="eventos" role="tab" aria-selected="true">Agenda</button>
       <button type="button" class="wa-tab" data-tab="chats" role="tab" aria-selected="false">
         Chats <span id="waTabUnread" class="wa-tab-badge hidden">0</span>
       </button>
     </nav>
 
-    <!-- Pestaña Eventos -->
     <section id="panel-eventos" class="wa-panel" role="tabpanel">
       <div class="wa-calendar-bar">
         <label class="wa-cal-label">Fecha
           <input type="date" id="waCalDate" />
         </label>
-        <button type="button" id="btnCalLoad" class="wa-btn-sec">Cargar eventos</button>
+        <button type="button" id="btnCalLoad" class="wa-btn-sec">Actualizar</button>
         <button type="button" id="btnCalSend" class="wa-btn-prim">Enviar todos</button>
         <button type="button" id="btnCalNew" class="wa-btn-sec">+ Nuevo evento</button>
         <span id="waCalResult" class="wa-cal-result"></span>
       </div>
       <div class="wa-events-wrap">
-        <div id="waEventsEmpty" class="wa-events-empty">
-          Elija una fecha y pulse <strong>Cargar eventos</strong> para ver las citas del calendario.
+        <div id="waEventsEmpty" class="wa-events-empty hidden">
+          Cargando agenda del día…
         </div>
-        <div id="waEventsTableWrap" class="wa-events-groups hidden"></div>
+        <div id="waEventsTableWrap" class="wa-doctors-grid"></div>
       </div>
     </section>
 
-    <!-- Pestaña Chats -->
     <section id="panel-chats" class="wa-panel hidden" role="tabpanel">
       <div class="wa-layout">
         <aside class="wa-sidebar">
           <div class="wa-search-wrap">
-            <input type="search" id="waSearchInput" class="wa-search" placeholder="Buscar teléfono o nombre…" />
+            <input type="search" id="waSearchInput" class="wa-search" placeholder="Buscar paciente o teléfono…" />
           </div>
           <div id="waConvList" class="wa-conv-list"></div>
         </aside>
         <section class="wa-thread">
-          <div id="waThreadEmpty" class="wa-thread-empty"><p>Seleccione una conversación</p></div>
+          <div id="waThreadEmpty" class="wa-thread-empty">
+            <div class="wa-thread-empty-card">
+              <p class="wa-thread-empty-title">Bandeja de mensajes</p>
+              <p>Seleccione un chat o envíe un recordatorio desde la agenda.</p>
+            </div>
+          </div>
           <div id="waThreadActive" class="wa-thread-active hidden">
             <header class="wa-thread-head">
+              <div class="wa-thread-avatar" id="waThreadAvatar">?</div>
               <div class="wa-thread-head-main">
                 <div id="waThreadName" class="wa-thread-name">—</div>
                 <div id="waThreadPhone" class="wa-thread-phone">—</div>
               </div>
-              <button type="button" id="btnDeleteChat" class="wa-btn-danger">Eliminar chat</button>
+              <button type="button" id="btnDeleteChat" class="wa-btn-danger">Eliminar</button>
             </header>
             <div id="waMessageList" class="wa-message-list"></div>
             <form id="waReplyForm" class="wa-composer">
-              <textarea id="waReplyInput" rows="2" placeholder="Escribir respuesta…" maxlength="4000"></textarea>
-              <button type="submit" id="waReplyBtn" class="wa-send-btn">Enviar</button>
+              <textarea id="waReplyInput" rows="1" placeholder="Escribir mensaje…" maxlength="4000"></textarea>
+              <button type="submit" id="waReplyBtn" class="wa-send-btn" aria-label="Enviar">Enviar</button>
             </form>
-            <p class="wa-reply-hint">Si Twilio rechaza el envío (ventana 24 h), use plantilla o el WhatsApp humano.</p>
           </div>
         </section>
       </div>
@@ -116,6 +125,11 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.21/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.21/locales/es.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/locale/es.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/plugin/relativeTime.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>

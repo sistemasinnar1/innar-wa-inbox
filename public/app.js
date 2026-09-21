@@ -10,6 +10,28 @@
   let currentTab = 'eventos';
   let calendarKeys = [];
   let sendingOne = false;
+  let fcInstances = {};
+  let useFullCalendar = typeof FullCalendar !== 'undefined';
+
+  if (typeof dayjs !== 'undefined') {
+    if (dayjs.extend && typeof dayjs_plugin_relativeTime !== 'undefined') {
+      dayjs.extend(dayjs_plugin_relativeTime);
+    } else if (dayjs.extend && dayjs.relativeTime) {
+      dayjs.extend(dayjs.relativeTime);
+    }
+    // plugin loaded as window.dayjs_plugin_relativeTime from separate script - dayjs CDN attaches differently
+    try {
+      if (window.dayjs_plugin_relativeTime) dayjs.extend(window.dayjs_plugin_relativeTime);
+    } catch (_) {}
+    dayjs.locale('es');
+  }
+
+  const DOCTORS = [
+    { key: 'Dra_Angela', name: 'Angela Legarda', accent: '#0f766e' },
+    { key: 'Dra_Karen', name: 'Karen Chamorro', accent: '#047857' },
+    { key: 'Dra_Adriana', name: 'Adriana Gelpud', accent: '#1d4ed8' },
+    { key: 'Dra_Valentina', name: 'Valentina', accent: '#b45309' }
+  ];
 
   function $(id) { return document.getElementById(id); }
 
@@ -32,11 +54,24 @@
 
   function formatTime(raw) {
     if (!raw) return '';
+    if (typeof dayjs !== 'undefined') {
+      const d = dayjs(String(raw).replace(' ', 'T'));
+      if (!d.isValid()) return String(raw).slice(0, 16);
+      if (d.isSame(dayjs(), 'day')) return d.format('HH:mm');
+      return d.format('D MMM HH:mm');
+    }
     const d = new Date(String(raw).replace(' ', 'T'));
     if (Number.isNaN(d.getTime())) return String(raw).slice(0, 16);
     const sameDay = d.toDateString() === new Date().toDateString();
     if (sameDay) return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
     return d.toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function initials(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
   }
 
   /** Etiquetas con emoji para botones (también mensajes viejos sin body). */
@@ -99,20 +134,29 @@
   }
 
   function doctorLabel(calendarKey, profesional) {
+    const found = DOCTORS.find((d) => d.key === calendarKey);
     if (profesional) return profesional;
-    const map = {
-      Dra_Angela: 'Angela Legarda',
-      Dra_Karen: 'Karen Chamorro',
-      Dra_Adriana: 'Adriana Gelpud',
-      Dra_Valentina: 'Valentina'
+    return (found && found.name) || calendarKey || 'Calendario';
+  }
+
+  function doctorMeta(calendarKey) {
+    return DOCTORS.find((d) => d.key === calendarKey) || {
+      key: calendarKey,
+      name: doctorLabel(calendarKey),
+      accent: '#1f6b45'
     };
-    return map[calendarKey] || calendarKey || 'Calendario';
   }
 
   function calendarOrderKey(key) {
-    const order = ['Dra_Angela', 'Dra_Karen', 'Dra_Adriana', 'Dra_Valentina'];
-    const i = order.indexOf(key);
+    const i = DOCTORS.findIndex((d) => d.key === key);
     return i >= 0 ? i : 99;
+  }
+
+  function destroyCalendars() {
+    Object.keys(fcInstances).forEach((k) => {
+      try { fcInstances[k].destroy(); } catch (_) {}
+    });
+    fcInstances = {};
   }
 
   function fillCalendarSelect() {
@@ -120,7 +164,7 @@
     if (!sel) return;
     const keys = calendarKeys.length
       ? calendarKeys
-      : ['Dra_Angela', 'Dra_Karen', 'Dra_Adriana', 'Dra_Valentina'];
+      : DOCTORS.map((d) => d.key);
     sel.innerHTML = keys.map((k) => {
       const name = doctorLabel(k);
       return `<option value="${esc(k)}">${esc(name)}</option>`;
@@ -147,6 +191,11 @@
     if (pe) pe.classList.toggle('hidden', currentTab !== 'eventos');
     if (pc) pc.classList.toggle('hidden', currentTab !== 'chats');
     if (currentTab === 'chats') loadConversations().catch(() => {});
+    if (currentTab === 'eventos') {
+      Object.values(fcInstances).forEach((cal) => {
+        try { cal.updateSize(); } catch (_) {}
+      });
+    }
   }
 
   function updateUnreadBadge() {
@@ -161,90 +210,163 @@
     }
   }
 
+  function eventCardHtml(ev) {
+    const phone = ev.telefono || '';
+    const phoneHtml = phone
+      ? esc(formatPhone(phone))
+      : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
+    const evJson = esc(JSON.stringify(ev));
+    return `<article class="wa-ev-card">
+      <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
+      <div>
+        <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
+        <div class="wa-ev-phone">${phoneHtml}</div>
+      </div>
+      <div class="wa-ev-actions">
+        <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>WA</button>
+        <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>Chat</button>
+        <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>Eliminar</button>
+      </div>
+    </article>`;
+  }
+
+  function toFcEvents(list) {
+    return list.map((ev) => {
+      let start = ev.start_iso || null;
+      if (!start && ev.fecha && ev.hora) {
+        // fallback: leave as all-day-ish list title only
+        start = null;
+      }
+      return {
+        id: String(ev.event_id || `${ev.calendar_key}-${ev.hora}-${ev.paciente}`),
+        title: `${ev.hora || ''} · ${ev.paciente || 'Paciente'}`.trim(),
+        start: start || undefined,
+        allDay: !start,
+        extendedProps: { raw: ev }
+      };
+    }).filter((e) => e.title);
+  }
+
+  function mountDoctorCalendar(hostEl, doctor, events, dateYmd) {
+    if (!useFullCalendar || typeof FullCalendar === 'undefined') return false;
+    const fcEvents = events
+      .map((ev) => {
+        const start = ev.start_iso || null;
+        if (!start) return null;
+        return {
+          id: String(ev.event_id || Math.random()),
+          title: ev.paciente || 'Paciente',
+          start,
+          backgroundColor: doctor.accent,
+          borderColor: doctor.accent,
+          extendedProps: { raw: ev }
+        };
+      })
+      .filter(Boolean);
+
+    const cal = new FullCalendar.Calendar(hostEl, {
+      locale: 'es',
+      initialView: 'listDay',
+      initialDate: dateYmd,
+      headerToolbar: false,
+      height: 'auto',
+      events: fcEvents,
+      noEventsContent: 'Sin citas con hora en calendario',
+      eventContent(arg) {
+        const ev = arg.event.extendedProps.raw || {};
+        const phone = ev.telefono || '';
+        const evJson = esc(JSON.stringify(ev));
+        return {
+          html: `<div class="wa-fc-ev">
+            <strong>${esc(arg.event.title)}</strong>
+            <div class="wa-ev-phone">${phone ? esc(formatPhone(phone)) : '<span class="wa-ev-phone-miss">Sin teléfono</span>'}</div>
+            <div class="wa-ev-actions" style="margin-top:6px">
+              <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>WA</button>
+              <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>Chat</button>
+              <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>Eliminar</button>
+            </div>
+          </div>`
+        };
+      }
+    });
+    cal.render();
+    fcInstances[doctor.key] = cal;
+    return true;
+  }
+
   function renderEvents() {
     const empty = $('waEventsEmpty');
     const wrap = $('waEventsTableWrap');
     if (!wrap) return;
 
-    if (!loadedEvents.length) {
-      if (empty) empty.classList.remove('hidden');
-      wrap.classList.add('hidden');
-      wrap.innerHTML = '';
-      return;
-    }
+    destroyCalendars();
 
-    if (empty) empty.classList.add('hidden');
+    const dateYmd = ($('waCalDate') && $('waCalDate').value) || todayYmd();
+    const keys = (calendarKeys.length ? calendarKeys : DOCTORS.map((d) => d.key))
+      .slice()
+      .sort((a, b) => calendarOrderKey(a) - calendarOrderKey(b));
+
+    // Always show 2x2 for the four known doctors; append any extra keys after
+    const baseKeys = DOCTORS.map((d) => d.key);
+    const orderedKeys = baseKeys.concat(keys.filter((k) => !baseKeys.includes(k)));
+
+    if (empty) {
+      empty.classList.add('hidden');
+      empty.textContent = 'No hay citas para esta fecha.';
+    }
     wrap.classList.remove('hidden');
 
-    const groups = new Map();
+    const byKey = new Map();
     loadedEvents.forEach((ev) => {
       const key = ev.calendar_key || '_otros';
-      if (!groups.has(key)) {
-        groups.set(key, {
-          calendar_key: key,
-          profesional: ev.profesional || doctorLabel(key),
-          events: []
-        });
-      }
-      const g = groups.get(key);
-      if (!g.profesional && ev.profesional) g.profesional = ev.profesional;
-      g.events.push(ev);
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(ev);
     });
 
-    const ordered = Array.from(groups.values()).sort(
-      (a, b) => calendarOrderKey(a.calendar_key) - calendarOrderKey(b.calendar_key)
-      || String(a.profesional).localeCompare(String(b.profesional), 'es')
-    );
-
-    wrap.innerHTML = ordered.map((g) => {
-      const name = doctorLabel(g.calendar_key, g.profesional);
-      const sorted = g.events.slice().sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
-      const rows = sorted.map((ev) => {
-        const phone = ev.telefono || '';
-        const phoneHtml = phone
-          ? esc(formatPhone(phone))
-          : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
-        const evJson = esc(JSON.stringify(ev));
-        return `<tr>
-          <td>${esc(ev.hora || '—')}</td>
-          <td>${esc(ev.paciente || '—')}</td>
-          <td>${phoneHtml}</td>
-          <td>
-            <div class="wa-ev-actions">
-              <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>
-                Enviar WA
-              </button>
-              <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>
-                Ver chat
-              </button>
-              <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>
-                Eliminar
-              </button>
-            </div>
-          </td>
-        </tr>`;
-      }).join('');
-
-      return `<section class="wa-cal-group">
-        <header class="wa-cal-group-head">
-          <h3 class="wa-cal-group-title">${esc(name)}</h3>
-          <span class="wa-cal-group-count">${sorted.length} cita${sorted.length === 1 ? '' : 's'}</span>
+    wrap.innerHTML = orderedKeys.map((key) => {
+      const meta = doctorMeta(key);
+      const list = (byKey.get(key) || []).slice().sort(
+        (a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))
+      );
+      const count = list.length;
+      return `<section class="wa-doc-card" style="--doc-accent:${esc(meta.accent)}" data-cal="${esc(key)}">
+        <header class="wa-doc-head">
+          <h3 class="wa-doc-title">${esc(meta.name)}</h3>
+          <span class="wa-doc-meta">${count} cita${count === 1 ? '' : 's'}</span>
         </header>
-        <div class="wa-events-table-wrap">
-          <table class="wa-events-table">
-            <thead>
-              <tr>
-                <th>Hora</th>
-                <th>Paciente</th>
-                <th>Teléfono</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
+        <div class="wa-doc-body">
+          <div class="wa-fc-host" id="fc-${esc(key)}"></div>
+          <div class="wa-doc-fallback" id="fb-${esc(key)}"></div>
         </div>
       </section>`;
     }).join('');
+
+    orderedKeys.forEach((key) => {
+      const meta = doctorMeta(key);
+      const list = (byKey.get(key) || []).slice().sort(
+        (a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))
+      );
+      const host = document.getElementById(`fc-${key}`);
+      const fallback = document.getElementById(`fb-${key}`);
+      if (!list.length) {
+        if (host) host.innerHTML = '';
+        if (fallback) fallback.innerHTML = '<div class="wa-doc-empty">Sin citas este día</div>';
+        return;
+      }
+      const withIso = list.filter((e) => e.start_iso);
+      const mounted = withIso.length && host
+        ? mountDoctorCalendar(host, meta, withIso, dateYmd)
+        : false;
+      if (mounted) {
+        if (fallback) {
+          const missing = list.filter((e) => !e.start_iso);
+          fallback.innerHTML = missing.map(eventCardHtml).join('');
+        }
+      } else if (fallback) {
+        if (host) host.innerHTML = '';
+        fallback.innerHTML = list.map(eventCardHtml).join('');
+      }
+    });
   }
 
   async function calLoad(send) {
@@ -315,7 +437,7 @@
     const list = $('waConvList');
     if (!list) return;
     if (!conversations.length) {
-      list.innerHTML = '<div class="wa-empty-list">Sin conversaciones aún.<br>Envíe recordatorios o espere respuestas.</div>';
+      list.innerHTML = '<div class="wa-empty-list">Sin conversaciones aún.<br>Envíe recordatorios desde la agenda.</div>';
       updateUnreadBadge();
       return;
     }
@@ -324,11 +446,14 @@
       const unread = Number(c.unread_count) || 0;
       const active = Number(c.id) === Number(activeId) ? ' is-active' : '';
       return `<button type="button" class="wa-conv-item${active}" data-id="${c.id}">
-        <div class="wa-conv-top">
-          <span class="wa-conv-name">${esc(name)}</span>
-          <span class="wa-conv-time">${esc(formatTime(c.last_message_at))}${unread ? ` <span class="wa-unread">${unread}</span>` : ''}</span>
+        <div class="wa-conv-avatar">${esc(initials(name))}</div>
+        <div>
+          <div class="wa-conv-top">
+            <span class="wa-conv-name">${esc(name)}</span>
+            <span class="wa-conv-time">${esc(formatTime(c.last_message_at))}${unread ? ` <span class="wa-unread">${unread}</span>` : ''}</span>
+          </div>
+          <div class="wa-conv-preview">${esc(c.last_message_preview || '')}</div>
         </div>
-        <div class="wa-conv-preview">${esc(c.last_message_preview || '')}</div>
       </button>`;
     }).join('');
     updateUnreadBadge();
@@ -337,11 +462,29 @@
   function renderMessages() {
     const box = $('waMessageList');
     if (!box) return;
-    box.innerHTML = messages.map((m) => {
+    let lastDay = '';
+    const parts = [];
+    messages.forEach((m) => {
+      const raw = String(m.created_at || '').replace(' ', 'T');
+      const dayKey = raw.slice(0, 10);
+      if (dayKey && dayKey !== lastDay) {
+        lastDay = dayKey;
+        let label = dayKey;
+        if (typeof dayjs !== 'undefined') {
+          const d = dayjs(raw);
+          if (d.isValid()) {
+            if (d.isSame(dayjs(), 'day')) label = 'Hoy';
+            else if (d.isSame(dayjs().subtract(1, 'day'), 'day')) label = 'Ayer';
+            else label = d.format('D MMM YYYY');
+          }
+        }
+        parts.push(`<div class="wa-day-sep">${esc(label)}</div>`);
+      }
       const dir = m.direction === 'out' ? 'out' : 'in';
       const text = displayMessageBody(m);
-      return `<div class="wa-bubble is-${dir}">${esc(text)}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}</span></div>`;
-    }).join('');
+      parts.push(`<div class="wa-bubble is-${dir}">${esc(text)}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}</span></div>`);
+    });
+    box.innerHTML = parts.join('');
     box.scrollTop = box.scrollHeight;
   }
 
@@ -355,8 +498,11 @@
     }
     empty.classList.add('hidden');
     active.classList.remove('hidden');
-    $('waThreadName').textContent = conv.display_name || formatPhone(conv.phone);
+    const name = conv.display_name || formatPhone(conv.phone);
+    $('waThreadName').textContent = name;
     $('waThreadPhone').textContent = formatPhone(conv.phone);
+    const av = $('waThreadAvatar');
+    if (av) av.textContent = initials(name);
   }
 
   async function loadConversations(q) {
@@ -685,7 +831,10 @@
   });
 
   const dateInput = $('waCalDate');
-  if (dateInput) dateInput.value = todayYmd();
+  if (dateInput) {
+    dateInput.value = todayYmd();
+    dateInput.addEventListener('change', () => calLoad(false));
+  }
   const btnCalLoad = $('btnCalLoad');
   if (btnCalLoad) btnCalLoad.addEventListener('click', () => calLoad(false));
   const btnCalSend = $('btnCalSend');
@@ -700,6 +849,12 @@
     await loadConversations();
     bindSocket();
     switchTab('eventos');
+    const empty = $('waEventsEmpty');
+    if (empty) {
+      empty.classList.remove('hidden');
+      empty.textContent = 'Cargando agenda del día…';
+    }
+    await calLoad(false);
   })().catch(() => {
     location.href = '/login';
   });

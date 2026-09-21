@@ -32,7 +32,11 @@ describe('twilio helpers', () => {
   it('humanoReplyText incluye link si hay env', () => {
     const { humanoReplyText } = require('../lib/twilio');
     process.env.WHATSAPP_HUMANO_URL = 'https://wa.me/573001112233';
-    assert.match(humanoReplyText(), /wa\.me\/573001112233/);
+    const text = humanoReplyText();
+    assert.match(text, /Con gusto, escríbanos dando click en el siguiente link:/);
+    assert.match(text, /👇/);
+    assert.match(text, /wa\.me\/573001112233/);
+    assert.doesNotMatch(text, /atención humana/i);
   });
 
   it('validateTwilioSignature', () => {
