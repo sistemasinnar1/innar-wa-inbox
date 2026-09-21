@@ -1,6 +1,8 @@
 'use strict';
 
 require('dotenv').config();
+// Evita que el TZ del host (p. ej. Brasil UTC−3) desplace las horas de citas
+if (!process.env.TZ) process.env.TZ = 'America/Bogota';
 
 const path = require('path');
 const http = require('http');

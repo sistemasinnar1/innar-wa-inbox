@@ -28,4 +28,18 @@ describe('hora Colombia', () => {
     const d = parseGoogleDateTime({ dateTime: '2026-09-21T20:00:00Z' });
     assert.equal(formatHora(d), '3:00 p. m.');
   });
+
+  it('flotante 16:00 no se interpreta como Brasil (evita 4pm→2pm)', () => {
+    // Antes: new Date('…T16:00:00') en America/Sao_Paulo = 2:00 p. m. Bogotá
+    const d = parseGoogleDateTime({
+      dateTime: '2026-09-21T16:00:00',
+      timeZone: 'America/Bogota'
+    });
+    assert.equal(formatHora(d), '4:00 p. m.');
+  });
+
+  it('flotante con milisegundos también ancla a -05:00', () => {
+    const d = parseGoogleDateTime({ dateTime: '2026-09-21T16:00:00.000' });
+    assert.equal(formatHora(d), '4:00 p. m.');
+  });
 });
