@@ -373,9 +373,15 @@ app.post('/api/calendars/send-one', requireAuth, async (req, res) => {
       return res.status(503).json({ error: 'Falta TWILIO_CONTENT_SID' });
     }
     const ev = req.body?.event || req.body;
-    if (!ev || !ev.telefono) {
-      return res.status(400).json({ error: 'Falta el evento con teléfono' });
+    const estado = cal.telefonoEstado(ev && ev.telefono);
+    if (!ev || !estado.ok) {
+      return res.status(400).json({
+        error: (estado && estado.message) || 'Falta el evento con teléfono válido',
+        code: 'INVALID_PHONE',
+        phone_status: estado
+      });
     }
+    ev.telefono = estado.phone;
     const results = await reminders.sendRemindersForEvents([ev], { emit: emitWa });
     const one = results[0];
     if (!one || !one.ok) {
@@ -414,6 +420,28 @@ app.post('/api/calendars/events', requireAuth, async (req, res) => {
   } catch (e) {
     const status = e.code === 'UNKNOWN_CALENDAR' || e.code === 'INVALID_PHONE'
       || e.code === 'NO_PATIENT' || e.code === 'BAD_DATETIME'
+      ? 400
+      : 500;
+    res.status(status).json({ error: e.message, code: e.code });
+  }
+});
+
+/** Actualiza teléfono de un evento en Google Calendar. */
+app.patch('/api/calendars/events/phone', requireAuth, async (req, res) => {
+  try {
+    if (!cal.googleConfigured()) {
+      return res.status(503).json({ error: 'Google Calendar no configurado' });
+    }
+    const b = req.body || {};
+    const updated = await cal.updateEventPhone({
+      calendarKey: String(b.calendar_key || '').trim(),
+      eventId: String(b.event_id || '').trim(),
+      paciente: b.paciente,
+      telefono: b.telefono
+    });
+    res.json({ event: updated });
+  } catch (e) {
+    const status = e.code === 'UNKNOWN_CALENDAR' || e.code === 'NO_EVENT_ID' || e.code === 'INVALID_PHONE'
       ? 400
       : 500;
     res.status(status).json({ error: e.message, code: e.code });

@@ -210,20 +210,107 @@
     }
   }
 
+  function eventKey(ev) {
+    return String(ev.event_id || `${ev.calendar_key}|${ev.hora}|${ev.paciente}`);
+  }
+
+  function analyzePhone(raw) {
+    const digits = String(raw || '').replace(/\D/g, '');
+    if (!digits) {
+      return { ok: false, level: 'missing', message: 'Sin teléfono', phone: '', digits: '' };
+    }
+    let phone = digits.length === 10 ? `57${digits}` : digits;
+    if (phone.length < 12) {
+      return {
+        ok: false,
+        level: 'incomplete',
+        message: `Número incompleto (${digits.length} dígitos)`,
+        phone,
+        digits
+      };
+    }
+    if (!/^57\d{10}$/.test(phone)) {
+      return { ok: false, level: 'invalid', message: 'Número inválido', phone, digits };
+    }
+    if (phone.charAt(2) !== '3') {
+      return {
+        ok: true,
+        level: 'warn',
+        message: 'No parece celular (debe iniciar en 3)',
+        phone,
+        digits
+      };
+    }
+    return { ok: true, level: 'ok', message: '', phone, digits };
+  }
+
+  function eventHasChat(ev) {
+    const st = analyzePhone(ev.telefono);
+    if (!st.phone) return false;
+    return conversations.some((c) => String(c.phone || '').replace(/\D/g, '') === st.phone);
+  }
+
+  function eventIsSent(ev) {
+    return !!(ev && (ev._enviado || eventHasChat(ev)));
+  }
+
+  function markEventSent(ev) {
+    if (!ev) return;
+    const key = eventKey(ev);
+    loadedEvents = loadedEvents.map((e) => (
+      eventKey(e) === key || (ev.event_id && e.event_id === ev.event_id)
+        ? { ...e, _enviado: true, telefono: ev.telefono || e.telefono }
+        : e
+    ));
+  }
+
+  function patchLoadedEvent(updated) {
+    if (!updated) return;
+    loadedEvents = loadedEvents.map((e) => {
+      if (updated.event_id && e.event_id === updated.event_id) {
+        return { ...e, ...updated, _enviado: e._enviado };
+      }
+      return e;
+    });
+  }
+
   function eventCardHtml(ev) {
-    const phone = ev.telefono || '';
-    const phoneHtml = phone
-      ? esc(formatPhone(phone))
-      : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
+    const st = analyzePhone(ev.telefono);
+    const phone = st.phone || '';
+    const sent = eventIsSent(ev);
+    const canSend = st.ok && !sent;
     const evJson = esc(JSON.stringify(ev));
-    return `<article class="wa-ev-card">
+
+    let phoneHtml;
+    if (st.level === 'missing') {
+      phoneHtml = '<span class="wa-ev-phone-miss">Sin teléfono</span>';
+    } else if (st.level === 'incomplete' || st.level === 'invalid') {
+      phoneHtml = `<span class="wa-ev-phone-miss">${esc(formatPhone(st.digits || ev.telefono))} · ${esc(st.message)}</span>`;
+    } else if (st.level === 'warn') {
+      phoneHtml = `<span>${esc(formatPhone(phone))}</span><span class="wa-badge wa-badge-warn">${esc(st.message)}</span>`;
+    } else {
+      phoneHtml = `<span>${esc(formatPhone(phone))}</span>`;
+    }
+
+    const sentBadge = sent ? '<span class="wa-badge wa-badge-sent">Enviado</span>' : '';
+    const badBadge = (st.level === 'incomplete' || st.level === 'invalid')
+      ? `<span class="wa-badge wa-badge-bad">${st.level === 'incomplete' ? 'Incompleto' : 'Inválido'}</span>`
+      : '';
+
+    return `<article class="wa-ev-card${sent ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}">
       <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
       <div>
-        <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
-        <div class="wa-ev-phone">${phoneHtml}</div>
+        <div class="wa-ev-patient-row">
+          <div class="wa-ev-patient">${esc(ev.paciente || '—')}</div>
+          ${sentBadge}${badBadge}
+        </div>
+        <div class="wa-ev-phone-row">${phoneHtml}</div>
       </div>
       <div class="wa-ev-actions">
-        <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>WA</button>
+        <button type="button" class="wa-btn-link" data-edit-phone='${evJson}'>Teléfono</button>
+        <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${canSend ? '' : 'disabled'}>
+          ${sent ? 'Enviado' : 'WA'}
+        </button>
         <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>Chat</button>
         <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>Eliminar</button>
       </div>
@@ -342,30 +429,18 @@
     }).join('');
 
     orderedKeys.forEach((key) => {
-      const meta = doctorMeta(key);
       const list = (byKey.get(key) || []).slice().sort(
         (a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))
       );
       const host = document.getElementById(`fc-${key}`);
       const fallback = document.getElementById(`fb-${key}`);
+      if (host) host.innerHTML = '';
+      if (!fallback) return;
       if (!list.length) {
-        if (host) host.innerHTML = '';
-        if (fallback) fallback.innerHTML = '<div class="wa-doc-empty">Sin citas este día</div>';
+        fallback.innerHTML = '<div class="wa-doc-empty">Sin citas este día</div>';
         return;
       }
-      const withIso = list.filter((e) => e.start_iso);
-      const mounted = withIso.length && host
-        ? mountDoctorCalendar(host, meta, withIso, dateYmd)
-        : false;
-      if (mounted) {
-        if (fallback) {
-          const missing = list.filter((e) => !e.start_iso);
-          fallback.innerHTML = missing.map(eventCardHtml).join('');
-        }
-      } else if (fallback) {
-        if (host) host.innerHTML = '';
-        fallback.innerHTML = list.map(eventCardHtml).join('');
-      }
+      fallback.innerHTML = list.map(eventCardHtml).join('');
     });
   }
 
@@ -389,9 +464,17 @@
       });
 
       // Flatten events from calendars for the table
+      const prevSent = new Map();
+      loadedEvents.forEach((e) => {
+        if (e._enviado && e.event_id) prevSent.set(String(e.event_id), true);
+      });
       const flat = [];
       (data.calendars || []).forEach((c) => {
-        (c.events || []).forEach((ev) => flat.push(ev));
+        (c.events || []).forEach((ev) => {
+          if (ev.event_id && prevSent.has(String(ev.event_id))) ev._enviado = true;
+          else if (eventHasChat(ev)) ev._enviado = true;
+          flat.push(ev);
+        });
       });
       loadedEvents = flat;
       renderEvents();
@@ -415,6 +498,17 @@
         }
       }
       if (send && data.send_results) {
+        data.send_results.forEach((r) => {
+          if (r.ok && r.event) markEventSent(r.event);
+          else if (r.ok && r.phone) {
+            loadedEvents.forEach((e) => {
+              if (analyzePhone(e.telefono).phone === String(r.phone).replace(/\D/g, '')) {
+                e._enviado = true;
+              }
+            });
+          }
+        });
+        renderEvents();
         const fails = data.send_results.filter((r) => !r.ok);
         if (fails.length) {
           window.alert(
@@ -510,6 +604,12 @@
     const data = await api(`/api/conversations${qs}`);
     conversations = data.conversations || [];
     renderConvList();
+    if (loadedEvents.length) {
+      loadedEvents.forEach((ev) => {
+        if (eventHasChat(ev)) ev._enviado = true;
+      });
+      renderEvents();
+    }
   }
 
   async function openConversation(id) {
@@ -567,18 +667,37 @@
   }
 
   async function sendOneEvent(ev, { openChatAfter } = {}) {
-    if (!ev || !ev.telefono) {
-      window.alert('Este evento no tiene teléfono');
+    if (!ev) return null;
+    const st = analyzePhone(ev.telefono);
+    if (!st.ok) {
+      window.alert(st.message || 'Teléfono inválido. Edítelo antes de enviar.');
+      openPhoneEdit(ev);
       return null;
+    }
+    if (st.level === 'warn') {
+      if (!window.confirm(`${st.message}.\n¿Enviar de todos modos a ${formatPhone(st.phone)}?`)) {
+        return null;
+      }
+    }
+    if (eventIsSent(ev)) {
+      const go = window.confirm('Este paciente ya tiene chat / fue marcado como enviado.\n¿Reenviar el recordatorio?');
+      if (!go) {
+        if (openChatAfter) await openChatByPhone(st.phone, ev);
+        return null;
+      }
     }
     if (sendingOne) return null;
     sendingOne = true;
     try {
+      const payload = { ...ev, telefono: st.phone };
       const data = await api('/api/calendars/send-one', {
         method: 'POST',
-        body: JSON.stringify({ event: ev })
+        body: JSON.stringify({ event: payload })
       });
+      markEventSent(payload);
+      renderEvents();
       await loadConversations();
+      renderEvents();
       if (openChatAfter && data.conversation) {
         switchTab('chats');
         await openConversation(data.conversation.id);
@@ -586,6 +705,81 @@
       return data;
     } finally {
       sendingOne = false;
+    }
+  }
+
+  let phoneEditTarget = null;
+
+  function openPhoneEdit(ev) {
+    phoneEditTarget = ev;
+    const bd = $('waPhoneModalBackdrop');
+    if (!bd) return;
+    $('waPhoneEditPatient').textContent = ev.paciente || 'Paciente';
+    const digits = String(ev.telefono || '').replace(/\D/g, '');
+    const shown = digits.startsWith('57') && digits.length === 12 ? digits.slice(2) : digits;
+    $('peTelefono').value = shown;
+    updatePhoneHint(shown);
+    bd.classList.remove('hidden');
+    bd.setAttribute('aria-hidden', 'false');
+    $('peTelefono').focus();
+  }
+
+  function closePhoneEdit() {
+    const bd = $('waPhoneModalBackdrop');
+    if (!bd) return;
+    bd.classList.add('hidden');
+    bd.setAttribute('aria-hidden', 'true');
+    phoneEditTarget = null;
+  }
+
+  function updatePhoneHint(raw) {
+    const hint = $('waPhoneEditHint');
+    if (!hint) return;
+    const st = analyzePhone(raw);
+    hint.className = 'wa-phone-edit-hint';
+    if (st.level === 'ok') {
+      hint.textContent = `Listo: ${formatPhone(st.phone)}`;
+      hint.classList.add('is-ok');
+    } else if (st.level === 'warn') {
+      hint.textContent = st.message;
+      hint.classList.add('is-warn');
+    } else {
+      hint.textContent = st.message || 'Use 10 dígitos (celular) o con 57.';
+      if (st.level !== 'missing') hint.classList.add('is-bad');
+    }
+  }
+
+  async function submitPhoneEdit(ev) {
+    if (ev) ev.preventDefault();
+    if (!phoneEditTarget) return;
+    const raw = $('peTelefono').value.trim();
+    const st = analyzePhone(raw);
+    if (!st.ok) {
+      updatePhoneHint(raw);
+      window.alert(st.message || 'Teléfono inválido');
+      return;
+    }
+    const target = phoneEditTarget;
+    try {
+      if (target.event_id && target.calendar_key) {
+        const data = await api('/api/calendars/events/phone', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            calendar_key: target.calendar_key,
+            event_id: target.event_id,
+            paciente: target.paciente,
+            telefono: st.phone
+          })
+        });
+        if (data.event) patchLoadedEvent({ ...data.event, _enviado: target._enviado });
+        else patchLoadedEvent({ ...target, telefono: st.phone });
+      } else {
+        patchLoadedEvent({ ...target, telefono: st.phone });
+      }
+      closePhoneEdit();
+      renderEvents();
+    } catch (err) {
+      window.alert(err.message);
     }
   }
 
@@ -640,10 +834,15 @@
 
   async function submitNewEvent(ev) {
     if (ev) ev.preventDefault();
+    const phoneSt = analyzePhone($('neTelefono').value.trim());
+    if (!phoneSt.ok) {
+      window.alert(phoneSt.message || 'Teléfono inválido');
+      return;
+    }
     const payload = {
       calendar_key: $('neCalendar').value,
       paciente: $('nePaciente').value.trim(),
-      telefono: $('neTelefono').value.trim(),
+      telefono: phoneSt.phone,
       date: $('neFecha').value,
       time: $('neHora').value,
       duration_min: parseInt($('neDuracion').value, 10) || 45,
@@ -753,6 +952,13 @@
   const eventsWrap = $('waEventsTableWrap');
   if (eventsWrap) {
     eventsWrap.addEventListener('click', (ev) => {
+      const editBtn = ev.target.closest('[data-edit-phone]');
+      if (editBtn) {
+        let eventObj = null;
+        try { eventObj = JSON.parse(editBtn.getAttribute('data-edit-phone')); } catch (_) {}
+        if (eventObj) openPhoneEdit(eventObj);
+        return;
+      }
       const delBtn = ev.target.closest('[data-delete-event]');
       if (delBtn && !delBtn.disabled) {
         let eventObj = null;
@@ -768,8 +974,9 @@
         let eventObj = null;
         try { eventObj = JSON.parse(sendBtn.getAttribute('data-send-one')); } catch (_) {}
         if (!eventObj) return;
-        if (!window.confirm(`¿Enviar recordatorio a ${eventObj.paciente}?`)) return;
-        sendOneEvent(eventObj, { openChatAfter: true }).catch((e) => {
+        const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
+        if (!window.confirm(`¿Enviar recordatorio a ${live.paciente}?`)) return;
+        sendOneEvent(live, { openChatAfter: true }).catch((e) => {
           window.alert(e.hint ? `${e.message}\n${e.hint}` : e.message);
         });
         return;
@@ -778,9 +985,27 @@
       if (!btn || btn.disabled) return;
       let eventObj = null;
       try { eventObj = JSON.parse(btn.getAttribute('data-event') || 'null'); } catch (_) {}
-      openChatByPhone(btn.getAttribute('data-open-chat'), eventObj).catch((e) => window.alert(e.message));
+      const live = eventObj
+        ? (loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj)
+        : null;
+      openChatByPhone(btn.getAttribute('data-open-chat'), live).catch((e) => window.alert(e.message));
     });
   }
+
+  const btnPhoneClose = $('btnPhoneModalClose');
+  if (btnPhoneClose) btnPhoneClose.addEventListener('click', closePhoneEdit);
+  const btnPhoneCancel = $('btnPhoneModalCancel');
+  if (btnPhoneCancel) btnPhoneCancel.addEventListener('click', closePhoneEdit);
+  const phoneBd = $('waPhoneModalBackdrop');
+  if (phoneBd) {
+    phoneBd.addEventListener('click', (e) => {
+      if (e.target === phoneBd) closePhoneEdit();
+    });
+  }
+  const phoneForm = $('waPhoneEditForm');
+  if (phoneForm) phoneForm.addEventListener('submit', submitPhoneEdit);
+  const peTel = $('peTelefono');
+  if (peTel) peTel.addEventListener('input', () => updatePhoneHint(peTel.value));
 
   const btnDeleteChat = $('btnDeleteChat');
   if (btnDeleteChat) {

@@ -9,8 +9,8 @@
   --card: #ffffff;
   --shadow: 0 10px 30px rgba(19, 38, 28, 0.07);
   --radius: 16px;
-  --font: "Figtree", system-ui, sans-serif;
-  --display: "Literata", Georgia, serif;
+  --font: "Plus Jakarta Sans", system-ui, sans-serif;
+  --display: "Fraunces", Georgia, serif;
 }
 
 * { box-sizing: border-box; }
@@ -18,12 +18,15 @@
 body {
   margin: 0;
   font-family: var(--font);
+  font-size: 15px;
+  letter-spacing: -0.01em;
   color: var(--ink);
   background:
     radial-gradient(1200px 500px at 10% -10%, rgba(31, 107, 69, 0.12), transparent 60%),
     radial-gradient(900px 400px at 100% 0%, rgba(180, 140, 60, 0.08), transparent 55%),
     linear-gradient(180deg, var(--bg0), var(--bg1));
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
 .login-body {
@@ -377,6 +380,14 @@ body {
   border-color: var(--line);
 }
 
+.wa-ev-card.is-sent {
+  background: rgba(216, 238, 225, 0.35);
+}
+
+.wa-ev-card.is-phone-bad {
+  background: rgba(253, 232, 232, 0.35);
+}
+
 .wa-ev-time {
   font-size: 0.78rem;
   font-weight: 800;
@@ -399,6 +410,49 @@ body {
 .wa-ev-phone-miss {
   color: #a32020;
   font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.wa-ev-phone-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.wa-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.wa-badge-sent {
+  background: #d8eee1;
+  color: #0f5132;
+}
+
+.wa-badge-warn {
+  background: #fff3d6;
+  color: #8a5a00;
+}
+
+.wa-badge-bad {
+  background: #fde8e8;
+  color: #a32020;
+}
+
+.wa-ev-patient-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .wa-ev-actions {
@@ -841,6 +895,23 @@ body {
 }
 
 .wa-check input { width: auto !important; margin: 0 !important; }
+
+.wa-phone-edit-patient {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.wa-phone-edit-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.wa-phone-edit-hint.is-bad { color: #a32020; }
+.wa-phone-edit-hint.is-warn { color: #8a5a00; }
+.wa-phone-edit-hint.is-ok { color: #0f5132; }
 
 .wa-modal-actions {
   display: flex;
