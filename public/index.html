@@ -11,42 +11,77 @@
     <header class="wa-topbar">
       <div class="wa-topbar-titles">
         <h1 class="wa-title">WhatsApp</h1>
-        <p class="wa-subtitle">Número API Twilio · Calendario Google · Fuera de 24 h a veces solo plantillas</p>
+        <p class="wa-subtitle">Calendario Google · Chat Twilio</p>
       </div>
       <div id="waStatusPill" class="wa-status-pill">—</div>
       <button type="button" id="btnLogout" class="wa-btn-back">Salir</button>
     </header>
-    <div class="wa-calendar-bar">
-      <label class="wa-cal-label">Citas del día
-        <input type="date" id="waCalDate" />
-      </label>
-      <button type="button" id="btnCalLoad" class="wa-btn-sec">Cargar eventos</button>
-      <button type="button" id="btnCalSend" class="wa-btn-prim">Enviar recordatorios</button>
-      <span id="waCalResult" class="wa-cal-result"></span>
-    </div>
-    <div class="wa-layout">
-      <aside class="wa-sidebar">
-        <div class="wa-search-wrap">
-          <input type="search" id="waSearchInput" class="wa-search" placeholder="Buscar teléfono o nombre…" />
+
+    <nav class="wa-tabs" role="tablist">
+      <button type="button" class="wa-tab is-active" data-tab="eventos" role="tab" aria-selected="true">Eventos</button>
+      <button type="button" class="wa-tab" data-tab="chats" role="tab" aria-selected="false">
+        Chats <span id="waTabUnread" class="wa-tab-badge hidden">0</span>
+      </button>
+    </nav>
+
+    <!-- Pestaña Eventos -->
+    <section id="panel-eventos" class="wa-panel" role="tabpanel">
+      <div class="wa-calendar-bar">
+        <label class="wa-cal-label">Fecha
+          <input type="date" id="waCalDate" />
+        </label>
+        <button type="button" id="btnCalLoad" class="wa-btn-sec">Cargar eventos</button>
+        <button type="button" id="btnCalSend" class="wa-btn-prim">Enviar recordatorios</button>
+        <span id="waCalResult" class="wa-cal-result"></span>
+      </div>
+      <div class="wa-events-wrap">
+        <div id="waEventsEmpty" class="wa-events-empty">
+          Elija una fecha y pulse <strong>Cargar eventos</strong> para ver las citas del calendario.
         </div>
-        <div id="waConvList" class="wa-conv-list"></div>
-      </aside>
-      <section class="wa-thread">
-        <div id="waThreadEmpty" class="wa-thread-empty"><p>Seleccione una conversación</p></div>
-        <div id="waThreadActive" class="wa-thread-active hidden">
-          <header class="wa-thread-head">
-            <div id="waThreadName" class="wa-thread-name">—</div>
-            <div id="waThreadPhone" class="wa-thread-phone">—</div>
-          </header>
-          <div id="waMessageList" class="wa-message-list"></div>
-          <form id="waReplyForm" class="wa-composer">
-            <textarea id="waReplyInput" rows="2" placeholder="Escribir respuesta…" maxlength="4000"></textarea>
-            <button type="submit" id="waReplyBtn" class="wa-send-btn">Enviar</button>
-          </form>
-          <p class="wa-reply-hint">Si Twilio rechaza el envío (ventana 24 h), use plantilla o el WhatsApp humano.</p>
+        <div id="waEventsTableWrap" class="wa-events-table-wrap hidden">
+          <table class="wa-events-table">
+            <thead>
+              <tr>
+                <th>Hora</th>
+                <th>Paciente</th>
+                <th>Teléfono</th>
+                <th>Profesional</th>
+                <th>Calendario</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="waEventsBody"></tbody>
+          </table>
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
+
+    <!-- Pestaña Chats -->
+    <section id="panel-chats" class="wa-panel hidden" role="tabpanel">
+      <div class="wa-layout">
+        <aside class="wa-sidebar">
+          <div class="wa-search-wrap">
+            <input type="search" id="waSearchInput" class="wa-search" placeholder="Buscar teléfono o nombre…" />
+          </div>
+          <div id="waConvList" class="wa-conv-list"></div>
+        </aside>
+        <section class="wa-thread">
+          <div id="waThreadEmpty" class="wa-thread-empty"><p>Seleccione una conversación</p></div>
+          <div id="waThreadActive" class="wa-thread-active hidden">
+            <header class="wa-thread-head">
+              <div id="waThreadName" class="wa-thread-name">—</div>
+              <div id="waThreadPhone" class="wa-thread-phone">—</div>
+            </header>
+            <div id="waMessageList" class="wa-message-list"></div>
+            <form id="waReplyForm" class="wa-composer">
+              <textarea id="waReplyInput" rows="2" placeholder="Escribir respuesta…" maxlength="4000"></textarea>
+              <button type="submit" id="waReplyBtn" class="wa-send-btn">Enviar</button>
+            </form>
+            <p class="wa-reply-hint">Si Twilio rechaza el envío (ventana 24 h), use plantilla o el WhatsApp humano.</p>
+          </div>
+        </section>
+      </div>
+    </section>
   </div>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>

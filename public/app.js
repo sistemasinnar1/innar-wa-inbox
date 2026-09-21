@@ -6,6 +6,8 @@
   let messages = [];
   let searchTimer = null;
   let sending = false;
+  let loadedEvents = [];
+  let currentTab = 'eventos';
 
   function $(id) { return document.getElementById(id); }
 
@@ -79,6 +81,68 @@
     return `${y}-${m}-${day}`;
   }
 
+  function switchTab(tab) {
+    currentTab = tab === 'chats' ? 'chats' : 'eventos';
+    document.querySelectorAll('.wa-tab').forEach((btn) => {
+      const on = btn.getAttribute('data-tab') === currentTab;
+      btn.classList.toggle('is-active', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const pe = $('panel-eventos');
+    const pc = $('panel-chats');
+    if (pe) pe.classList.toggle('hidden', currentTab !== 'eventos');
+    if (pc) pc.classList.toggle('hidden', currentTab !== 'chats');
+    if (currentTab === 'chats') loadConversations().catch(() => {});
+  }
+
+  function updateUnreadBadge() {
+    const badge = $('waTabUnread');
+    if (!badge) return;
+    const n = conversations.reduce((s, c) => s + (Number(c.unread_count) || 0), 0);
+    if (n > 0) {
+      badge.textContent = String(n > 99 ? '99+' : n);
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+
+  function renderEvents() {
+    const empty = $('waEventsEmpty');
+    const wrap = $('waEventsTableWrap');
+    const body = $('waEventsBody');
+    if (!body) return;
+
+    if (!loadedEvents.length) {
+      if (empty) empty.classList.remove('hidden');
+      if (wrap) wrap.classList.add('hidden');
+      return;
+    }
+
+    if (empty) empty.classList.add('hidden');
+    if (wrap) wrap.classList.remove('hidden');
+
+    const sorted = loadedEvents.slice().sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
+    body.innerHTML = sorted.map((ev, idx) => {
+      const phone = ev.telefono || '';
+      const phoneHtml = phone
+        ? esc(formatPhone(phone))
+        : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
+      return `<tr data-ev-idx="${idx}">
+        <td>${esc(ev.hora || '—')}</td>
+        <td>${esc(ev.paciente || '—')}</td>
+        <td>${phoneHtml}</td>
+        <td>${esc(ev.profesional || '—')}</td>
+        <td>${esc(ev.calendar_key || '—')}</td>
+        <td>
+          <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" ${phone ? '' : 'disabled'}>
+            Ver chat
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
   async function calLoad(send) {
     const dateEl = $('waCalDate');
     const resultEl = $('waCalResult');
@@ -97,13 +161,27 @@
         method: 'POST',
         body: JSON.stringify({ date, send: !!send })
       });
-      let msg = `${data.total_events || 0} eventos · ${data.with_phone || 0} con teléfono`;
+
+      // Flatten events from calendars for the table
+      const flat = [];
+      (data.calendars || []).forEach((c) => {
+        (c.events || []).forEach((ev) => flat.push(ev));
+      });
+      loadedEvents = flat;
+      renderEvents();
+
+      let msg = `${data.total_events || flat.length} eventos · ${data.with_phone || flat.filter((e) => e.telefono).length} con teléfono`;
       if (send) {
         msg += ` · enviados ${data.sent_ok || 0}`;
         if (data.sent_fail) msg += ` · fallidos ${data.sent_fail}`;
       }
       if (resultEl) resultEl.textContent = msg;
-      if (send) await loadConversations();
+
+      if (send) {
+        await loadConversations();
+        updateUnreadBadge();
+      }
+
       if (!send && data.calendars) {
         const errs = data.calendars.filter((c) => c.error);
         if (errs.length) {
@@ -119,6 +197,7 @@
           );
         }
       }
+      switchTab('eventos');
     } catch (err) {
       if (resultEl) resultEl.textContent = '';
       window.alert(err.hint ? `${err.message}\n${err.hint}` : err.message);
@@ -132,7 +211,8 @@
     const list = $('waConvList');
     if (!list) return;
     if (!conversations.length) {
-      list.innerHTML = '<div class="wa-empty-list">Sin conversaciones aún</div>';
+      list.innerHTML = '<div class="wa-empty-list">Sin conversaciones aún.<br>Envíe recordatorios o espere respuestas.</div>';
+      updateUnreadBadge();
       return;
     }
     list.innerHTML = conversations.map((c) => {
@@ -147,6 +227,7 @@
         <div class="wa-conv-preview">${esc(c.last_message_preview || '')}</div>
       </button>`;
     }).join('');
+    updateUnreadBadge();
   }
 
   function renderMessages() {
@@ -192,6 +273,23 @@
     showThread(data.conversation);
     renderMessages();
     renderConvList();
+  }
+
+  async function openChatByPhone(phone) {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) {
+      window.alert('Este evento no tiene teléfono');
+      return;
+    }
+    switchTab('chats');
+    await loadConversations();
+    const found = conversations.find((c) => String(c.phone || '').replace(/\D/g, '') === digits);
+    if (found) {
+      await openConversation(found.id);
+    } else {
+      showThread(null);
+      window.alert('Aún no hay chat con este número. Envíe el recordatorio primero o espere una respuesta del paciente.');
+    }
   }
 
   async function sendReply(ev) {
@@ -254,6 +352,19 @@
     sock.on('wa:message', onWaMessage);
   }
 
+  document.querySelectorAll('.wa-tab').forEach((btn) => {
+    btn.addEventListener('click', () => switchTab(btn.getAttribute('data-tab')));
+  });
+
+  const eventsWrap = $('waEventsTableWrap');
+  if (eventsWrap) {
+    eventsWrap.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-open-chat]');
+      if (!btn || btn.disabled) return;
+      openChatByPhone(btn.getAttribute('data-open-chat')).catch((e) => window.alert(e.message));
+    });
+  }
+
   $('waConvList').addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-id]');
     if (!btn) return;
@@ -295,6 +406,7 @@
     setStatusPill(await api('/api/status'));
     await loadConversations();
     bindSocket();
+    switchTab('eventos');
   })().catch(() => {
     location.href = '/login';
   });
