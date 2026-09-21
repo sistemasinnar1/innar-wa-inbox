@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WhatsApp — Innar</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="wa-page">
+    <header class="wa-topbar">
+      <div class="wa-topbar-titles">
+        <h1 class="wa-title">WhatsApp</h1>
+        <p class="wa-subtitle">Número API Twilio · Fuera de 24 h a veces solo plantillas</p>
+      </div>
+      <div id="waStatusPill" class="wa-status-pill">—</div>
+      <button type="button" id="btnLogout" class="wa-btn-back">Salir</button>
+    </header>
+    <div class="wa-layout">
+      <aside class="wa-sidebar">
+        <div class="wa-search-wrap">
+          <input type="search" id="waSearchInput" class="wa-search" placeholder="Buscar teléfono o nombre…" />
+        </div>
+        <div id="waConvList" class="wa-conv-list"></div>
+      </aside>
+      <section class="wa-thread">
+        <div id="waThreadEmpty" class="wa-thread-empty"><p>Seleccione una conversación</p></div>
+        <div id="waThreadActive" class="wa-thread-active hidden">
+          <header class="wa-thread-head">
+            <div id="waThreadName" class="wa-thread-name">—</div>
+            <div id="waThreadPhone" class="wa-thread-phone">—</div>
+          </header>
+          <div id="waMessageList" class="wa-message-list"></div>
+          <form id="waReplyForm" class="wa-composer">
+            <textarea id="waReplyInput" rows="2" placeholder="Escribir respuesta…" maxlength="4000"></textarea>
+            <button type="submit" id="waReplyBtn" class="wa-send-btn">Enviar</button>
+          </form>
+          <p class="wa-reply-hint">Si Twilio rechaza el envío (ventana 24 h), use plantilla o el WhatsApp humano.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

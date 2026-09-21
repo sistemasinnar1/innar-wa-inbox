@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WhatsApp — Innar</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <h1>WhatsApp Innar</h1>
+    <p class="login-sub">Bandeja del número API (Twilio)</p>
+    <form id="loginForm">
+      <label>Usuario
+        <input type="text" name="usuario" id="usuario" autocomplete="username" required />
+      </label>
+      <label>Contraseña
+        <input type="password" name="password" id="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit">Entrar</button>
+      <p id="loginError" class="error" hidden></p>
+    </form>
+  </main>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const err = document.getElementById('loginError');
+      err.hidden = true;
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario: document.getElementById('usuario').value,
+          password: document.getElementById('password').value
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        err.textContent = data.error || 'Error de acceso';
+        err.hidden = false;
+        return;
+      }
+      location.href = '/';
+    });
+  </script>
+</body>
+</html>
