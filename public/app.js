@@ -39,6 +39,25 @@
     return d.toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
 
+  /** Etiquetas con emoji para botones (también mensajes viejos sin body). */
+  function displayMessageBody(m) {
+    const body = String(m && m.body || '').trim();
+    if (body && body !== '(sin texto)') return body;
+    const raw = `${m && m.button_payload || ''} ${body}`
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    if (raw.includes('si_asistire') || raw.includes('si, asistire') || raw.includes('si asistire')) {
+      return '✅ Sí, asistiré';
+    }
+    if (raw.includes('no_asistire') || raw.includes('no asistire')) {
+      return '❌ No asistiré';
+    }
+    if (raw.includes('escrib')) return '💬 Escríbenos';
+    if (m && m.button_payload) return `🔘 ${m.button_payload}`;
+    return body || '📩 Mensaje recibido';
+  }
+
   async function api(url, opts) {
     const res = await fetch(url, {
       credentials: 'same-origin',
@@ -158,6 +177,9 @@
             <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>
               Ver chat
             </button>
+            <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>
+              Eliminar
+            </button>
           </div>
         </td>
       </tr>`;
@@ -256,8 +278,8 @@
     if (!box) return;
     box.innerHTML = messages.map((m) => {
       const dir = m.direction === 'out' ? 'out' : 'in';
-      const payload = m.button_payload ? ` · ${m.button_payload}` : '';
-      return `<div class="wa-bubble is-${dir}">${esc(m.body || '')}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}${esc(payload)}</span></div>`;
+      const text = displayMessageBody(m);
+      return `<div class="wa-bubble is-${dir}">${esc(text)}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}</span></div>`;
     }).join('');
     box.scrollTop = box.scrollHeight;
   }
@@ -293,6 +315,47 @@
     ));
     showThread(data.conversation);
     renderMessages();
+    renderConvList();
+  }
+
+  async function deleteEvent(ev) {
+    if (!ev || !ev.event_id || !ev.calendar_key) {
+      window.alert('Este evento no se puede eliminar (falta id de Google Calendar)');
+      return;
+    }
+    const ok = window.confirm(
+      `¿Eliminar el evento de ${ev.paciente || 'paciente'} (${ev.hora || 'sin hora'})?\nSe borrará también en Google Calendar.`
+    );
+    if (!ok) return;
+    await api('/api/calendars/events', {
+      method: 'DELETE',
+      body: JSON.stringify({
+        calendar_key: ev.calendar_key,
+        event_id: ev.event_id
+      })
+    });
+    loadedEvents = loadedEvents.filter(
+      (e) => !(String(e.event_id) === String(ev.event_id) && e.calendar_key === ev.calendar_key)
+    );
+    renderEvents();
+    const resultEl = $('waCalResult');
+    if (resultEl) resultEl.textContent = `Evento eliminado: ${ev.paciente || ev.event_id}`;
+  }
+
+  async function deleteActiveChat() {
+    if (!activeId) return;
+    const conv = conversations.find((c) => Number(c.id) === Number(activeId));
+    const label = (conv && (conv.display_name || formatPhone(conv.phone))) || 'este chat';
+    const ok = window.confirm(`¿Eliminar el chat con ${label}?\nSe borrarán todos los mensajes.`);
+    if (!ok) return;
+    const id = activeId;
+    await api(`/api/conversations/${id}`, { method: 'DELETE' });
+    conversations = conversations.filter((c) => Number(c.id) !== Number(id));
+    if (Number(activeId) === Number(id)) {
+      activeId = null;
+      messages = [];
+      showThread(null);
+    }
     renderConvList();
   }
 
@@ -463,6 +526,17 @@
     if (typeof io !== 'function') return;
     const sock = io({ path: '/socket.io/', withCredentials: true });
     sock.on('wa:message', onWaMessage);
+    sock.on('wa:conversation_deleted', (payload) => {
+      const id = payload && payload.id;
+      if (!id) return;
+      conversations = conversations.filter((c) => Number(c.id) !== Number(id));
+      if (Number(activeId) === Number(id)) {
+        activeId = null;
+        messages = [];
+        showThread(null);
+      }
+      renderConvList();
+    });
   }
 
   document.querySelectorAll('.wa-tab').forEach((btn) => {
@@ -472,6 +546,16 @@
   const eventsWrap = $('waEventsTableWrap');
   if (eventsWrap) {
     eventsWrap.addEventListener('click', (ev) => {
+      const delBtn = ev.target.closest('[data-delete-event]');
+      if (delBtn && !delBtn.disabled) {
+        let eventObj = null;
+        try { eventObj = JSON.parse(delBtn.getAttribute('data-delete-event')); } catch (_) {}
+        if (!eventObj) return;
+        deleteEvent(eventObj).catch((e) => {
+          window.alert(e.hint ? `${e.message}\n${e.hint}` : e.message);
+        });
+        return;
+      }
       const sendBtn = ev.target.closest('[data-send-one]');
       if (sendBtn && !sendBtn.disabled) {
         let eventObj = null;
@@ -488,6 +572,13 @@
       let eventObj = null;
       try { eventObj = JSON.parse(btn.getAttribute('data-event') || 'null'); } catch (_) {}
       openChatByPhone(btn.getAttribute('data-open-chat'), eventObj).catch((e) => window.alert(e.message));
+    });
+  }
+
+  const btnDeleteChat = $('btnDeleteChat');
+  if (btnDeleteChat) {
+    btnDeleteChat.addEventListener('click', () => {
+      deleteActiveChat().catch((e) => window.alert(e.message));
     });
   }
 

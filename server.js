@@ -162,7 +162,8 @@ app.post('/api/webhook', async (req, res) => {
     console.warn('[WA] Webhook rechazado:', sig.error);
     return res.status(403).type('text/plain').send('Forbidden');
   }
-  res.status(200).type('text/plain').send('OK');
+  // TwiML vacío: si se responde texto plano ("OK"), Twilio lo reenvía al paciente.
+  res.status(200).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
 
   setImmediate(async () => {
     try {
@@ -170,8 +171,9 @@ app.post('/api/webhook', async (req, res) => {
       const phone = wa.normalizeWaPhone(p.From || '');
       if (!phone) return;
 
-      const body = String(p.Body || '').trim();
+      const rawBody = String(p.Body || '').trim();
       const buttonPayload = String(p.ButtonPayload || p.ButtonText || '').trim();
+      const displayBody = wa.displayInboundText(rawBody, buttonPayload);
       const profileName = String(p.ProfileName || '').trim() || null;
       const messageSid = String(p.MessageSid || p.SmsMessageSid || '').trim() || null;
 
@@ -179,7 +181,7 @@ app.post('/api/webhook', async (req, res) => {
       const inserted = await insertMessage({
         conversationId: conv.id,
         direction: 'in',
-        body: body || buttonPayload || null,
+        body: displayBody,
         buttonPayload: buttonPayload || null,
         twilioSid: messageSid,
         status: 'received'
@@ -187,7 +189,7 @@ app.post('/api/webhook', async (req, res) => {
 
       if (!inserted.duplicate) {
         await touchConversation(conv.id, {
-          preview: wa.previewText(body || buttonPayload || '(sin texto)'),
+          preview: wa.previewText(displayBody),
           incrementUnread: true
         });
         const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
@@ -198,36 +200,9 @@ app.post('/api/webhook', async (req, res) => {
         });
       }
 
-      const kind = wa.classifyButtonPayload(buttonPayload, body);
+      const kind = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kind === 'si_asistire' || kind === 'no_asistire') {
         void wa.forwardToGasWebhook(p);
-      } else if (kind === 'escribenos') {
-        try {
-          const replyBody = wa.humanoReplyText();
-          const sent = await wa.sendWhatsAppText({ toPhone: phone, body: replyBody });
-          const out = await insertMessage({
-            conversationId: conv.id,
-            direction: 'out',
-            body: replyBody,
-            buttonPayload: 'escribenos_auto',
-            twilioSid: sent.sid,
-            status: sent.status || 'sent'
-          });
-          if (!out.duplicate) {
-            await touchConversation(conv.id, {
-              preview: wa.previewText(replyBody),
-              incrementUnread: false
-            });
-            const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [out.id]);
-            const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
-            emitWa('wa:message', {
-              conversation: mapConversation(convFresh),
-              message: mapMessage(msgRow)
-            });
-          }
-        } catch (err) {
-          console.warn('[WA] Escríbenos auto-reply:', err.message);
-        }
       }
     } catch (err) {
       console.error('[WA] webhook process:', err.message);
@@ -382,6 +357,24 @@ app.post('/api/calendars/events', requireAuth, async (req, res) => {
   }
 });
 
+/** Elimina evento de Google Calendar. */
+app.delete('/api/calendars/events', requireAuth, async (req, res) => {
+  try {
+    if (!cal.googleConfigured()) {
+      return res.status(503).json({ error: 'Google Calendar no configurado' });
+    }
+    const b = req.body || {};
+    const result = await cal.deleteEvent({
+      calendarKey: String(b.calendar_key || '').trim(),
+      eventId: String(b.event_id || '').trim()
+    });
+    res.json(result);
+  } catch (e) {
+    const status = e.code === 'UNKNOWN_CALENDAR' || e.code === 'NO_EVENT_ID' ? 400 : 500;
+    res.status(status).json({ error: e.message, code: e.code });
+  }
+});
+
 app.get('/api/conversations', requireAuth, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
@@ -423,6 +416,21 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     await db.execute('UPDATE wa_conversations SET unread_count = 0 WHERE id = ?', [id]);
     const fresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
     res.json({ conversation: mapConversation(fresh), messages: messages.map(mapMessage) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Elimina chat y todos sus mensajes. */
+app.delete('/api/conversations/:id', requireAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido' });
+    const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
+    if (!conv) return res.status(404).json({ error: 'No encontrada' });
+    await db.execute('DELETE FROM wa_conversations WHERE id = ?', [id]);
+    emitWa('wa:conversation_deleted', { id });
+    res.json({ ok: true, id });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

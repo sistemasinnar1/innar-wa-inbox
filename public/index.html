@@ -70,8 +70,11 @@
           <div id="waThreadEmpty" class="wa-thread-empty"><p>Seleccione una conversación</p></div>
           <div id="waThreadActive" class="wa-thread-active hidden">
             <header class="wa-thread-head">
-              <div id="waThreadName" class="wa-thread-name">—</div>
-              <div id="waThreadPhone" class="wa-thread-phone">—</div>
+              <div class="wa-thread-head-main">
+                <div id="waThreadName" class="wa-thread-name">—</div>
+                <div id="waThreadPhone" class="wa-thread-phone">—</div>
+              </div>
+              <button type="button" id="btnDeleteChat" class="wa-btn-danger">Eliminar chat</button>
             </header>
             <div id="waMessageList" class="wa-message-list"></div>
             <form id="waReplyForm" class="wa-composer">

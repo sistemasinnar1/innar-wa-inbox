@@ -7,7 +7,8 @@ const {
   normalizeWaPhone,
   classifyButtonPayload,
   validateTwilioSignature,
-  previewText
+  previewText,
+  displayInboundText
 } = require('../lib/twilio');
 
 describe('twilio helpers', () => {
@@ -19,6 +20,13 @@ describe('twilio helpers', () => {
     assert.equal(classifyButtonPayload('si_asistire', ''), 'si_asistire');
     assert.equal(classifyButtonPayload('no_asistire', ''), 'no_asistire');
     assert.equal(classifyButtonPayload('escribenos', ''), 'escribenos');
+  });
+
+  it('displayInboundText con emojis', () => {
+    assert.equal(displayInboundText('', 'si_asistire'), '✅ Sí, asistiré');
+    assert.equal(displayInboundText('', 'no_asistire'), '❌ No asistiré');
+    assert.equal(displayInboundText('', 'escribenos'), '💬 Escríbenos');
+    assert.equal(displayInboundText('Hola', ''), 'Hola');
   });
 
   it('validateTwilioSignature', () => {
