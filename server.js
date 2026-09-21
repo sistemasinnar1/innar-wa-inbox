@@ -203,6 +203,33 @@ app.post('/api/webhook', async (req, res) => {
       const kind = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kind === 'si_asistire' || kind === 'no_asistire') {
         void wa.forwardToGasWebhook(p);
+      } else if (kind === 'escribenos') {
+        try {
+          const replyBody = wa.humanoReplyText();
+          const sent = await wa.sendWhatsAppText({ toPhone: phone, body: replyBody });
+          const out = await insertMessage({
+            conversationId: conv.id,
+            direction: 'out',
+            body: replyBody,
+            buttonPayload: 'escribenos_auto',
+            twilioSid: sent.sid,
+            status: sent.status || 'sent'
+          });
+          if (!out.duplicate) {
+            await touchConversation(conv.id, {
+              preview: wa.previewText(replyBody),
+              incrementUnread: false
+            });
+            const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [out.id]);
+            const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+            emitWa('wa:message', {
+              conversation: mapConversation(convFresh),
+              message: mapMessage(msgRow)
+            });
+          }
+        } catch (err) {
+          console.warn('[WA] Escríbenos auto-reply:', err.message);
+        }
       }
     } catch (err) {
       console.error('[WA] webhook process:', err.message);
@@ -241,6 +268,7 @@ app.get('/api/status', requireAuth, (req, res) => {
     validateSignature: wa.shouldValidateSignature(),
     googleCalendar: cal.googleConfigured(),
     contentSid: !!String(process.env.TWILIO_CONTENT_SID || '').trim(),
+    humanoUrl: !!String(process.env.WHATSAPP_HUMANO_URL || '').trim(),
     calendars: Object.keys(cal.loadCalendarios())
   });
 });

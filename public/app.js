@@ -98,13 +98,33 @@
     }
   }
 
+  function doctorLabel(calendarKey, profesional) {
+    if (profesional) return profesional;
+    const map = {
+      Dra_Angela: 'Angela Legarda',
+      Dra_Karen: 'Karen Chamorro',
+      Dra_Adriana: 'Adriana Gelpud',
+      Dra_Valentina: 'Valentina'
+    };
+    return map[calendarKey] || calendarKey || 'Calendario';
+  }
+
+  function calendarOrderKey(key) {
+    const order = ['Dra_Angela', 'Dra_Karen', 'Dra_Adriana', 'Dra_Valentina'];
+    const i = order.indexOf(key);
+    return i >= 0 ? i : 99;
+  }
+
   function fillCalendarSelect() {
     const sel = $('neCalendar');
     if (!sel) return;
     const keys = calendarKeys.length
       ? calendarKeys
       : ['Dra_Angela', 'Dra_Karen', 'Dra_Adriana', 'Dra_Valentina'];
-    sel.innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+    sel.innerHTML = keys.map((k) => {
+      const name = doctorLabel(k);
+      return `<option value="${esc(k)}">${esc(name)}</option>`;
+    }).join('');
   }
 
   function todayYmd() {
@@ -144,45 +164,86 @@
   function renderEvents() {
     const empty = $('waEventsEmpty');
     const wrap = $('waEventsTableWrap');
-    const body = $('waEventsBody');
-    if (!body) return;
+    if (!wrap) return;
 
     if (!loadedEvents.length) {
       if (empty) empty.classList.remove('hidden');
-      if (wrap) wrap.classList.add('hidden');
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
       return;
     }
 
     if (empty) empty.classList.add('hidden');
-    if (wrap) wrap.classList.remove('hidden');
+    wrap.classList.remove('hidden');
 
-    const sorted = loadedEvents.slice().sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
-    body.innerHTML = sorted.map((ev) => {
-      const phone = ev.telefono || '';
-      const phoneHtml = phone
-        ? esc(formatPhone(phone))
-        : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
-      const evJson = esc(JSON.stringify(ev));
-      return `<tr>
-        <td>${esc(ev.hora || '—')}</td>
-        <td>${esc(ev.paciente || '—')}</td>
-        <td>${phoneHtml}</td>
-        <td>${esc(ev.profesional || '—')}</td>
-        <td>${esc(ev.calendar_key || '—')}</td>
-        <td>
-          <div class="wa-ev-actions">
-            <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>
-              Enviar WA
-            </button>
-            <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>
-              Ver chat
-            </button>
-            <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>
-              Eliminar
-            </button>
-          </div>
-        </td>
-      </tr>`;
+    const groups = new Map();
+    loadedEvents.forEach((ev) => {
+      const key = ev.calendar_key || '_otros';
+      if (!groups.has(key)) {
+        groups.set(key, {
+          calendar_key: key,
+          profesional: ev.profesional || doctorLabel(key),
+          events: []
+        });
+      }
+      const g = groups.get(key);
+      if (!g.profesional && ev.profesional) g.profesional = ev.profesional;
+      g.events.push(ev);
+    });
+
+    const ordered = Array.from(groups.values()).sort(
+      (a, b) => calendarOrderKey(a.calendar_key) - calendarOrderKey(b.calendar_key)
+      || String(a.profesional).localeCompare(String(b.profesional), 'es')
+    );
+
+    wrap.innerHTML = ordered.map((g) => {
+      const name = doctorLabel(g.calendar_key, g.profesional);
+      const sorted = g.events.slice().sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
+      const rows = sorted.map((ev) => {
+        const phone = ev.telefono || '';
+        const phoneHtml = phone
+          ? esc(formatPhone(phone))
+          : '<span class="wa-ev-phone-miss">Sin teléfono</span>';
+        const evJson = esc(JSON.stringify(ev));
+        return `<tr>
+          <td>${esc(ev.hora || '—')}</td>
+          <td>${esc(ev.paciente || '—')}</td>
+          <td>${phoneHtml}</td>
+          <td>
+            <div class="wa-ev-actions">
+              <button type="button" class="wa-btn-link" data-send-one='${evJson}' ${phone ? '' : 'disabled'}>
+                Enviar WA
+              </button>
+              <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>
+                Ver chat
+              </button>
+              <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'}>
+                Eliminar
+              </button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+
+      return `<section class="wa-cal-group">
+        <header class="wa-cal-group-head">
+          <h3 class="wa-cal-group-title">${esc(name)}</h3>
+          <span class="wa-cal-group-count">${sorted.length} cita${sorted.length === 1 ? '' : 's'}</span>
+        </header>
+        <div class="wa-events-table-wrap">
+          <table class="wa-events-table">
+            <thead>
+              <tr>
+                <th>Hora</th>
+                <th>Paciente</th>
+                <th>Teléfono</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </section>`;
     }).join('');
   }
 

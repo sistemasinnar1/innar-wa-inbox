@@ -178,6 +178,34 @@ body {
   font-size: 0.95rem;
 }
 
+.wa-events-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wa-cal-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+
+.wa-cal-group-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: var(--ink, #1a2e22);
+}
+
+.wa-cal-group-count {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .wa-events-table-wrap {
   background: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(26, 46, 34, 0.08);

@@ -29,6 +29,12 @@ describe('twilio helpers', () => {
     assert.equal(displayInboundText('Hola', ''), 'Hola');
   });
 
+  it('humanoReplyText incluye link si hay env', () => {
+    const { humanoReplyText } = require('../lib/twilio');
+    process.env.WHATSAPP_HUMANO_URL = 'https://wa.me/573001112233';
+    assert.match(humanoReplyText(), /wa\.me\/573001112233/);
+  });
+
   it('validateTwilioSignature', () => {
     const token = 'test_token';
     const url = 'https://wa.example.com/api/webhook';
