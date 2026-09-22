@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { buildTemplateVars } = require('../lib/reminders');
 
 describe('reminders template vars', () => {
-  it('ordena variables como la plantilla Twilio (paciente/fecha/hora/profesional/sede)', () => {
+  it('ordena variables como la plantilla de terapia (tipo/paciente/fecha/hora/profesional)', () => {
     const vars = buildTemplateVars({
       tipo: 'terapia',
       paciente: 'Ana Pérez',
@@ -14,11 +14,11 @@ describe('reminders template vars', () => {
       profesional: 'Angela Legarda',
       ubicacion: 'Sede Principal'
     });
-    assert.equal(vars['1'], 'Ana Pérez');
-    assert.equal(vars['2'], '21/09/2026');
-    assert.equal(vars['3'], '10:00 a. m.');
-    assert.equal(vars['4'], 'Angela Legarda');
-    assert.equal(vars['5'], 'Sede Principal');
+    assert.equal(vars['1'], 'terapia');
+    assert.equal(vars['2'], 'Ana Pérez');
+    assert.equal(vars['3'], '21/09/2026');
+    assert.equal(vars['4'], '10:00 a. m.');
+    assert.equal(vars['5'], 'Angela Legarda');
   });
 
   it('recalcula hora Colombia desde start_iso al enviar', () => {
@@ -30,7 +30,8 @@ describe('reminders template vars', () => {
       profesional: 'Angela',
       start_iso: '2026-09-21T21:00:00.000Z'
     });
-    assert.equal(vars['3'], '4:00 p. m.');
-    assert.equal(vars['2'], '21/09/2026');
+    assert.equal(vars['1'], 'terapia');
+    assert.equal(vars['4'], '4:00 p. m.');
+    assert.equal(vars['3'], '21/09/2026');
   });
 });
