@@ -275,6 +275,28 @@ app.post('/api/webhook', async (req, res) => {
       const kind = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kind === 'si_asistire' || kind === 'no_asistire') {
         void wa.forwardToGasWebhook(p);
+        if (cal.googleConfigured()) {
+          const status = kind === 'no_asistire' ? 'cancelado' : 'confirmado';
+          void reminders.applyAttendanceFromReminder({
+            phone,
+            status,
+            conversationId: conv.id,
+            originalRepliedMessageSid: p.OriginalRepliedMessageSid || ''
+          })
+            .then((r) => {
+              if (r.updated) {
+                console.log(`[WA] Calendario: ${r.updated} evento(s) → ${status} (${phone})`);
+                emitWa('wa:calendar_attendance', {
+                  phone,
+                  status,
+                  events: r.items
+                });
+              } else {
+                console.warn(`[WA] Calendario RSVP sin cita exacta (${phone}):`, r.reason || 'none');
+              }
+            })
+            .catch((err) => console.warn('[WA] Calendario RSVP:', err.message));
+        }
       } else if (kind === 'escribenos') {
         try {
           const replyBody = wa.humanoReplyText();

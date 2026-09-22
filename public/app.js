@@ -1333,6 +1333,14 @@
     if (typeof io !== 'function') return;
     const sock = io({ path: '/socket.io/', withCredentials: true });
     sock.on('wa:message', onWaMessage);
+    sock.on('wa:calendar_attendance', (payload) => {
+      const events = (payload && payload.events) || [];
+      if (!events.length) return;
+      events.forEach((ev) => {
+        if (ev && ev.event_id) patchLoadedEvent(ev);
+      });
+      if (loadedEvents.length) renderEvents();
+    });
     sock.on('wa:conversation_deleted', (payload) => {
       const id = payload && payload.id;
       if (!id) return;
