@@ -1,11 +1,36 @@
 (function () {
   'use strict';
 
+  const RAPIDAS_DEFAULT = [
+    { id: 'esperamos', label: 'Lo esperamos', texto: 'Confirmado, lo esperamos. Por favor llegue 10 minutos antes.' },
+    { id: 'reprogramar', label: 'Reprogramar', texto: '¿Desea reprogramar la cita? Responda con el día que le queda mejor.' },
+    { id: 'gracias', label: 'Gracias', texto: 'Gracias por escribirnos. Quedamos atentos a cualquier novedad.' }
+  ];
+  const RAPIDAS_KEY = 'innar-wa-rapidas';
+
+  function cargarRapidas() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(RAPIDAS_KEY) || 'null');
+      if (!Array.isArray(raw) || !raw.length) return RAPIDAS_DEFAULT.map((r) => ({ ...r }));
+      const lista = raw.slice(0, 3).map((r, i) => ({
+        id: RAPIDAS_DEFAULT[i] ? RAPIDAS_DEFAULT[i].id : ('r' + i),
+        label: String(r.label || '').trim().slice(0, 24),
+        texto: String(r.texto || '').trim().slice(0, 500)
+      })).filter((r) => r.label && r.texto);
+      return lista.length ? lista : RAPIDAS_DEFAULT.map((r) => ({ ...r }));
+    } catch (_) {
+      return RAPIDAS_DEFAULT.map((r) => ({ ...r }));
+    }
+  }
+
   let conversations = [];
   let activeId = null;
   let messages = [];
-  let searchTimer = null;
   let sending = false;
+  let rapidas = cargarRapidas();
+  let editandoRapidas = false;
+  let ventanaAbierta = false;
+  let soloNoLeidos = false;
   let loadedEvents = [];
   let currentTab = 'eventos';
   let calendarKeys = [];
@@ -705,15 +730,44 @@
     }
   }
 
+  function previewDe(c) {
+    const t = String(c.last_message_preview || '').trim();
+    if (!t) return '';
+    return c.last_direction === 'out' ? `Tú: ${t}` : t;
+  }
+
+  function palomitas(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'read') return '<span class="wa-ticks is-read" title="Leído">✓✓</span>';
+    if (s === 'delivered') return '<span class="wa-ticks" title="Entregado">✓✓</span>';
+    if (s === 'failed' || s === 'undelivered') return '<span class="wa-ticks is-fail" title="No salió">!</span>';
+    return '<span class="wa-ticks" title="Enviado">✓</span>';
+  }
+
+  function chatsVisibles() {
+    const q = String(($('waSearchInput') && $('waSearchInput').value) || '').trim().toLowerCase();
+    return conversations.filter((c) => {
+      if (soloNoLeidos && !(Number(c.unread_count) > 0)) return false;
+      if (!q) return true;
+      return String(c.display_name || '').toLowerCase().includes(q)
+        || String(c.phone || '').toLowerCase().includes(q)
+        || String(c.last_message_preview || '').toLowerCase().includes(q);
+    });
+  }
+
   function renderConvList() {
     const list = $('waConvList');
     if (!list) return;
-    if (!conversations.length) {
-      list.innerHTML = '<div class="wa-empty-list">Sin conversaciones aún.<br>Envíe recordatorios desde la agenda.</div>';
+    const rows = chatsVisibles();
+    if (!rows.length) {
+      const vacio = ($('waSearchInput') && $('waSearchInput').value.trim())
+        ? 'Ningún chat coincide con la búsqueda.'
+        : (soloNoLeidos ? 'No hay mensajes sin leer.' : 'Sin chats de terapia.<br>Envíe recordatorios desde la agenda.');
+      list.innerHTML = `<div class="wa-empty-list">${vacio}</div>`;
       updateUnreadBadge();
       return;
     }
-    list.innerHTML = conversations.map((c) => {
+    list.innerHTML = rows.map((c) => {
       const name = c.display_name || formatPhone(c.phone);
       const unread = Number(c.unread_count) || 0;
       const active = Number(c.id) === Number(activeId) ? ' is-active' : '';
@@ -725,7 +779,7 @@
             <span class="wa-conv-name">${esc(name)}</span>
             <span class="wa-conv-time">${esc(formatTime(c.last_message_at))}</span>
           </div>
-          <div class="wa-conv-preview">${esc(c.last_message_preview || '')}</div>
+          <div class="wa-conv-preview">${esc(previewDe(c))}</div>
           <div class="wa-conv-meta">
             ${rsvp || ''}
             ${unread ? `<span class="wa-unread">${unread}</span>` : ''}
@@ -757,7 +811,8 @@
       }
       const dir = m.direction === 'out' ? 'out' : 'in';
       const text = displayMessageBody(m);
-      parts.push(`<div class="wa-bubble is-${dir}">${esc(text)}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}</span></div>`);
+      const ticks = dir === 'out' ? palomitas(m.status) : '';
+      parts.push(`<div class="wa-bubble is-${dir}">${esc(text)}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}${ticks}</span></div>`);
     });
     box.innerHTML = parts.join('');
     box.scrollTop = box.scrollHeight;
@@ -780,12 +835,129 @@
     if (av) av.textContent = initials(name);
     const rsvpEl = $('waThreadRsvp');
     if (rsvpEl) rsvpEl.innerHTML = rsvpBadgeHtml(conv.last_rsvp) || '';
+    pintarVentana(ventanaDe(conv), conv.last_inbound_at);
+    if (!editandoRapidas) pintarRapidas();
+    pintarCitaChat(conv);
   }
 
-  async function loadConversations(q) {
-    const qs = q ? `?q=${encodeURIComponent(q)}` : '';
-    const data = await api(`/api/conversations${qs}`);
-    conversations = data.conversations || [];
+  function ventanaDe(conv) {
+    if (!conv) return false;
+    if (conv.window_open === true || conv.window_open === false) return conv.window_open;
+    const d = parseServerDate(conv.last_inbound_at);
+    if (!d) return false;
+    return Date.now() - d.getTime() < 24 * 60 * 60 * 1000;
+  }
+
+  function hastaVentana(raw) {
+    const d = parseServerDate(raw);
+    if (!d) return '';
+    return formatTime(new Date(d.getTime() + 24 * 60 * 60 * 1000).toISOString());
+  }
+
+  function pintarVentana(abierta, lastInbound) {
+    ventanaAbierta = !!abierta;
+    const hint = $('waComposerHint');
+    const input = $('waReplyInput');
+    const send = $('waReplyBtn');
+    const pill = $('waThreadWindow');
+    if (input) {
+      input.disabled = !ventanaAbierta;
+      input.placeholder = ventanaAbierta ? 'Escribe un mensaje' : 'Ventana cerrada: use el recordatorio';
+      if (!ventanaAbierta) input.value = '';
+      ajustarCaja();
+    }
+    if (send) send.disabled = !ventanaAbierta;
+    if (pill) {
+      pill.textContent = ventanaAbierta ? 'Puede escribir' : 'Ventana cerrada';
+      pill.classList.toggle('is-open', ventanaAbierta);
+      pill.classList.toggle('is-closed', !ventanaAbierta);
+    }
+    if (!hint) return;
+    hint.classList.remove('hidden');
+    hint.classList.toggle('is-open', ventanaAbierta);
+    hint.classList.toggle('is-closed', !ventanaAbierta);
+    if (ventanaAbierta) {
+      const hasta = hastaVentana(lastInbound);
+      hint.textContent = hasta
+        ? `Puede escribir libremente hasta ${hasta}.`
+        : 'Puede escribir: el paciente escribió en las últimas 24 horas.';
+    } else {
+      hint.textContent = 'Ventana de 24 horas cerrada. El texto libre no sale. Reenvíe el recordatorio de la cita.';
+    }
+  }
+
+  function citasDelTelefono(phone) {
+    const tail = String(phone || '').replace(/\D/g, '').slice(-10);
+    if (tail.length < 7) return [];
+    return loadedEvents.filter((ev) => String(ev.telefono || '').replace(/\D/g, '').endsWith(tail));
+  }
+
+  function pintarCitaChat(conv) {
+    const bar = $('waCitaBar');
+    if (!bar) return;
+    const citas = conv ? citasDelTelefono(conv.phone) : [];
+    if (!citas.length) {
+      bar.classList.add('hidden');
+      bar.innerHTML = '';
+      return;
+    }
+    const opciones = citas.map((ev, i) => {
+      const label = `${ev.hora || ''} · ${ev.paciente || 'Cita'} · ${ev.profesional || ev.calendar_key || ''}`.trim();
+      return `<option value="${i}">${esc(label)}</option>`;
+    }).join('');
+    bar.classList.remove('hidden');
+    bar.innerHTML = `
+      <label class="wa-cita-label">Cita del día
+        <select id="waCitaSelect">${opciones}</select>
+      </label>
+      <button type="button" class="wa-btn-prim" id="waReenviar">Reenviar recordatorio</button>`;
+    bar._citas = citas;
+  }
+
+  function pintarRapidas() {
+    const quick = $('waQuick');
+    if (!quick) return;
+    if (!activeId || !ventanaAbierta) {
+      quick.classList.add('hidden');
+      quick.innerHTML = '';
+      return;
+    }
+    quick.classList.remove('hidden');
+    const chips = rapidas.map((r) => `<button type="button" class="wa-chip" data-rapida="${esc(r.id)}">${esc(r.label)}</button>`).join('');
+    const editor = editandoRapidas ? `
+      <div class="wa-rapidas-edit">
+        <div class="wa-rapidas-head">
+          <strong>Frases rápidas</strong>
+          <span>Se guardan solo en este equipo</span>
+        </div>
+        ${rapidas.map((r, i) => `
+          <div class="wa-rapida-card">
+            <span class="wa-rapida-n">${i + 1}</span>
+            <div class="wa-rapida-fields">
+              <input type="text" data-rapida-label="${i}" maxlength="24" value="${esc(r.label)}" placeholder="Nombre del botón" />
+              <textarea data-rapida-texto="${i}" maxlength="500" rows="2" placeholder="Mensaje que se envía">${esc(r.texto)}</textarea>
+            </div>
+          </div>`).join('')}
+        <div class="wa-rapidas-actions">
+          <button type="button" class="wa-rapida-btn" id="waRestaurarRapidas">Restaurar</button>
+          <button type="button" class="wa-rapida-btn" id="waEditarRapidas">Cerrar</button>
+          <button type="button" class="wa-rapida-btn wa-rapida-save" id="waGuardarRapidas">Guardar</button>
+        </div>
+      </div>` : '';
+    const fila = editandoRapidas ? '' : `<div class="wa-quick-row">${chips}<button type="button" class="wa-chip" id="waEditarRapidas">Editar</button></div>`;
+    quick.innerHTML = fila + editor;
+  }
+
+  function ajustarCaja() {
+    const input = $('waReplyInput');
+    if (!input) return;
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 128)}px`;
+  }
+
+  async function loadConversations() {
+    const data = await api('/api/conversations?limit=300');
+    conversations = (data.conversations || []).filter((c) => c.plantilla === 'terapia');
     renderConvList();
     if (loadedEvents.length) {
       loadedEvents.forEach((ev) => {
@@ -836,7 +1008,7 @@
     if (!activeId) return;
     const conv = conversations.find((c) => Number(c.id) === Number(activeId));
     const label = (conv && (conv.display_name || formatPhone(conv.phone))) || 'este chat';
-    const ok = window.confirm(`¿Eliminar el chat con ${label}?\nSe borrarán todos los mensajes.`);
+    const ok = window.confirm(`¿Eliminar el chat con ${label}?\nSe quita de esta lista. No se borra en el celular del paciente.`);
     if (!ok) return;
     const id = activeId;
     await api(`/api/conversations/${id}`, { method: 'DELETE' });
@@ -1094,8 +1266,8 @@
     if (!activeId || sending) return;
     const input = $('waReplyInput');
     const btn = $('waReplyBtn');
-    const body = String(input.value || '').trim();
-    if (!body) return;
+    const body = String((input && input.value) || '').trim();
+    if (!body || !ventanaAbierta) return;
     sending = true;
     btn.disabled = true;
     try {
@@ -1104,6 +1276,7 @@
         body: JSON.stringify({ body })
       });
       input.value = '';
+      ajustarCaja();
       if (data.message && !messages.some((m) => Number(m.id) === Number(data.message.id))) {
         messages.push(data.message);
         renderMessages();
@@ -1124,7 +1297,18 @@
   }
 
   function upsertConversation(conv) {
-    if (!conv || !conv.id) return;
+    if (!conv || !conv.id || conv.plantilla !== 'terapia') {
+      if (conv && conv.id) {
+        conversations = conversations.filter((c) => Number(c.id) !== Number(conv.id));
+        if (Number(activeId) === Number(conv.id)) {
+          activeId = null;
+          messages = [];
+          showThread(null);
+        }
+        renderConvList();
+      }
+      return;
+    }
     const idx = conversations.findIndex((c) => Number(c.id) === Number(conv.id));
     if (idx >= 0) conversations[idx] = { ...conversations[idx], ...conv };
     else conversations.unshift(conv);
@@ -1266,14 +1450,78 @@
     openConversation(parseInt(btn.getAttribute('data-id'), 10)).catch((e) => window.alert(e.message));
   });
 
-  $('waSearchInput').addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      loadConversations($('waSearchInput').value.trim()).catch(() => {});
-    }, 250);
+  $('waSearchInput').addEventListener('input', () => renderConvList());
+  document.querySelectorAll('[data-chat-filter]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      soloNoLeidos = btn.getAttribute('data-chat-filter') === 'noleidos';
+      document.querySelectorAll('[data-chat-filter]').forEach((b) => {
+        b.classList.toggle('is-active', b === btn);
+      });
+      renderConvList();
+    });
   });
 
+  const quickBox = $('waQuick');
+  if (quickBox) {
+    quickBox.addEventListener('click', (ev) => {
+      if (ev.target.closest('#waEditarRapidas')) {
+        editandoRapidas = !editandoRapidas;
+        pintarRapidas();
+        return;
+      }
+      if (ev.target.closest('#waRestaurarRapidas')) {
+        rapidas = RAPIDAS_DEFAULT.map((r) => ({ ...r }));
+        try { localStorage.removeItem(RAPIDAS_KEY); } catch (_) {}
+        editandoRapidas = false;
+        pintarRapidas();
+        return;
+      }
+      if (ev.target.closest('#waGuardarRapidas')) {
+        const next = rapidas.map((r, i) => ({
+          id: r.id,
+          label: (document.querySelector(`[data-rapida-label="${i}"]`)?.value || '').trim().slice(0, 24),
+          texto: (document.querySelector(`[data-rapida-texto="${i}"]`)?.value || '').trim().slice(0, 500)
+        })).filter((r) => r.label && r.texto);
+        if (!next.length) {
+          window.alert('Escriba al menos una frase.');
+          return;
+        }
+        rapidas = next;
+        try { localStorage.setItem(RAPIDAS_KEY, JSON.stringify(rapidas)); } catch (_) {}
+        editandoRapidas = false;
+        pintarRapidas();
+        return;
+      }
+      const chip = ev.target.closest('[data-rapida]');
+      if (!chip || !ventanaAbierta) return;
+      const item = rapidas.find((r) => r.id === chip.getAttribute('data-rapida'));
+      if (!item) return;
+      const input = $('waReplyInput');
+      if (input) input.value = item.texto;
+      sendReply();
+    });
+  }
+
+  const citaBar = $('waCitaBar');
+  if (citaBar) {
+    citaBar.addEventListener('click', (ev) => {
+      if (!ev.target.closest('#waReenviar')) return;
+      const citas = citaBar._citas || [];
+      const sel = $('waCitaSelect');
+      const idx = parseInt(sel && sel.value, 10) || 0;
+      const evento = citas[idx];
+      if (!evento) {
+        window.alert('Abra la agenda del día: esta cita no está cargada.');
+        return;
+      }
+      sendOneEvent(evento, { openChatAfter: true }).catch((e) => {
+        window.alert(e.hint ? `${e.message}\n${e.hint}` : e.message);
+      });
+    });
+  }
+
   $('waReplyForm').addEventListener('submit', sendReply);
+  $('waReplyInput').addEventListener('input', ajustarCaja);
   $('waReplyInput').addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();

@@ -112,6 +112,20 @@ function requireAuth(req, res, next) {
   return res.redirect('/login');
 }
 
+const WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function windowOpenFrom(lastInbound) {
+  if (!lastInbound) return false;
+  const raw = String(lastInbound).trim();
+  if (!raw) return false;
+  const iso = /[zZ]$|[+-]\d{2}:\d{2}$/.test(raw)
+    ? raw
+    : `${raw.includes('T') ? raw : raw.replace(' ', 'T')}Z`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  return Date.now() - d.getTime() < WINDOW_MS;
+}
+
 function mapConversation(row) {
   if (!row) return null;
   return {
@@ -122,7 +136,11 @@ function mapConversation(row) {
     last_message_preview: row.last_message_preview,
     unread_count: Number(row.unread_count) || 0,
     last_rsvp: row.last_rsvp || null,
-    last_rsvp_at: row.last_rsvp_at || null
+    last_rsvp_at: row.last_rsvp_at || null,
+    last_inbound_at: row.last_inbound_at || null,
+    last_direction: row.last_direction || null,
+    window_open: windowOpenFrom(row.last_inbound_at),
+    plantilla: row.plantilla || null
   };
 }
 
@@ -172,20 +190,26 @@ async function insertMessage({ conversationId, direction, body, buttonPayload, t
   return { id: db.insertId(result), duplicate: false };
 }
 
-async function touchConversation(conversationId, { preview, incrementUnread }) {
+async function touchConversation(conversationId, { preview, incrementUnread, direction }) {
+  const dir = direction === 'in' || direction === 'out' ? direction : null;
   if (incrementUnread) {
     await db.execute(
       `UPDATE wa_conversations
-       SET last_message_at = NOW(), last_message_preview = ?, unread_count = unread_count + 1
+       SET last_message_at = NOW(), last_message_preview = ?, unread_count = unread_count + 1,
+           last_direction = COALESCE(?, last_direction),
+           last_inbound_at = IF(? = 'in', NOW(), last_inbound_at),
+           oculto = 0
        WHERE id = ?`,
-      [preview, conversationId]
+      [preview, dir, dir, conversationId]
     );
   } else {
     await db.execute(
       `UPDATE wa_conversations
-       SET last_message_at = NOW(), last_message_preview = ?, unread_count = 0
+       SET last_message_at = NOW(), last_message_preview = ?, unread_count = 0,
+           last_direction = COALESCE(?, last_direction),
+           oculto = 0
        WHERE id = ?`,
-      [preview, conversationId]
+      [preview, dir, conversationId]
     );
   }
 }
@@ -226,10 +250,11 @@ app.post('/api/webhook', async (req, res) => {
         status: 'received'
       });
 
-      if (!inserted.duplicate) {
+      if (!inserted.duplicate && conv.plantilla === 'terapia') {
         await touchConversation(conv.id, {
           preview: wa.previewText(displayBody),
-          incrementUnread: true
+          incrementUnread: true,
+          direction: 'in'
         });
         const kindEarly = wa.classifyButtonPayload(buttonPayload, rawBody);
         if (kindEarly === 'si_asistire' || kindEarly === 'no_asistire' || kindEarly === 'escribenos') {
@@ -238,14 +263,15 @@ app.post('/api/webhook', async (req, res) => {
             [kindEarly, conv.id]
           );
         }
-        const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
         const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+        const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
         emitWa('wa:message', {
           conversation: mapConversation(convFresh),
           message: mapMessage(msgRow)
         });
       }
 
+      if (conv.plantilla === 'terapia') {
       const kind = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kind === 'si_asistire' || kind === 'no_asistire') {
         void wa.forwardToGasWebhook(p);
@@ -264,7 +290,8 @@ app.post('/api/webhook', async (req, res) => {
           if (!out.duplicate) {
             await touchConversation(conv.id, {
               preview: wa.previewText(replyBody),
-              incrementUnread: false
+              incrementUnread: false,
+              direction: 'out'
             });
             const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [out.id]);
             const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
@@ -276,6 +303,7 @@ app.post('/api/webhook', async (req, res) => {
         } catch (err) {
           console.warn('[WA] Escríbenos auto-reply:', err.message);
         }
+      }
       }
     } catch (err) {
       console.error('[WA] webhook process:', err.message);
@@ -499,19 +527,23 @@ app.delete('/api/calendars/events', requireAuth, async (req, res) => {
 app.get('/api/conversations', requireAuth, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const limit = Math.min(300, Math.max(1, parseInt(req.query.limit, 10) || 80));
     let rows;
     if (q) {
       const like = `%${q.replace(/[%_]/g, '')}%`;
       rows = await db.query(
         `SELECT * FROM wa_conversations
-         WHERE phone LIKE ? OR IFNULL(display_name,'') LIKE ?
+         WHERE IFNULL(oculto, 0) = 0
+           AND plantilla = 'terapia'
+           AND (phone LIKE ? OR IFNULL(display_name,'') LIKE ?)
          ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
         [like, like, limit]
       );
     } else {
       rows = await db.query(
         `SELECT * FROM wa_conversations
+         WHERE IFNULL(oculto, 0) = 0
+           AND plantilla = 'terapia'
          ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
         [limit]
       );
@@ -527,7 +559,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido' });
     const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
-    if (!conv) return res.status(404).json({ error: 'No encontrada' });
+    if (!conv || conv.plantilla !== 'terapia') return res.status(404).json({ error: 'No encontrada' });
     const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 80));
     const messages = await db.query(
       `SELECT * FROM wa_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?`,
@@ -536,20 +568,28 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     messages.reverse();
     await db.execute('UPDATE wa_conversations SET unread_count = 0 WHERE id = ?', [id]);
     const fresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
-    res.json({ conversation: mapConversation(fresh), messages: messages.map(mapMessage) });
+    const mapped = mapConversation(fresh);
+    res.json({
+      conversation: mapped,
+      messages: messages.map(mapMessage),
+      windowOpen: !!(mapped && mapped.window_open)
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-/** Elimina chat y todos sus mensajes. */
+/** Oculta el chat de la lista. No borra los mensajes ni el hilo del paciente. */
 app.delete('/api/conversations/:id', requireAuth, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido' });
     const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
     if (!conv) return res.status(404).json({ error: 'No encontrada' });
-    await db.execute('DELETE FROM wa_conversations WHERE id = ?', [id]);
+    await db.execute(
+      'UPDATE wa_conversations SET oculto = 1, unread_count = 0 WHERE id = ?',
+      [id]
+    );
     emitWa('wa:conversation_deleted', { id });
     res.json({ ok: true, id });
   } catch (e) {
@@ -566,7 +606,13 @@ app.post('/api/conversations/:id/reply', requireAuth, async (req, res) => {
     if (body.length > 4000) return res.status(400).json({ error: 'Mensaje demasiado largo' });
 
     const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
-    if (!conv) return res.status(404).json({ error: 'No encontrada' });
+    if (!conv || conv.plantilla !== 'terapia') return res.status(404).json({ error: 'No encontrada' });
+    if (!windowOpenFrom(conv.last_inbound_at)) {
+      return res.status(409).json({
+        error: 'Fuera de las 24 horas: WhatsApp solo permite responder si el paciente escribió hoy. Puede reenviar el recordatorio desde la cita.',
+        code: 'WINDOW_CLOSED'
+      });
+    }
 
     let sent;
     try {
@@ -589,7 +635,11 @@ app.post('/api/conversations/:id/reply', requireAuth, async (req, res) => {
       twilioSid: sent.sid,
       status: sent.status || 'sent'
     });
-    await touchConversation(conv.id, { preview: wa.previewText(body), incrementUnread: false });
+    await touchConversation(conv.id, {
+      preview: wa.previewText(body),
+      incrementUnread: false,
+      direction: 'out'
+    });
     const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
     const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
     const payload = {
@@ -642,10 +692,71 @@ async function backfillRsvpFromMessages() {
   }
 }
 
+async function backfillChatMeta() {
+  try {
+    await db.execute(`
+      UPDATE wa_conversations c
+      JOIN (
+        SELECT conversation_id, MAX(created_at) AS last_in
+        FROM wa_messages
+        WHERE direction = 'in'
+        GROUP BY conversation_id
+      ) x ON x.conversation_id = c.id
+      SET c.last_inbound_at = x.last_in
+      WHERE c.last_inbound_at IS NULL
+    `);
+    await db.execute(`
+      UPDATE wa_conversations c
+      JOIN (
+        SELECT m.conversation_id, m.direction
+        FROM wa_messages m
+        JOIN (
+          SELECT conversation_id, MAX(id) AS max_id
+          FROM wa_messages
+          GROUP BY conversation_id
+        ) t ON t.max_id = m.id
+      ) x ON x.conversation_id = c.id
+      SET c.last_direction = x.direction
+      WHERE c.last_direction IS NULL OR c.last_direction = ''
+    `);
+    await db.execute(`
+      UPDATE wa_conversations c
+      SET c.plantilla = 'terapia'
+      WHERE (c.plantilla IS NULL OR c.plantilla = '')
+        AND EXISTS (
+          SELECT 1 FROM wa_messages m
+          WHERE m.conversation_id = c.id
+            AND (
+              m.button_payload = 'recordatorio'
+              OR LOWER(m.body) LIKE '%terapia%'
+              OR LOWER(m.body) LIKE '%le recordamos su cita de %'
+            )
+        )
+    `);
+    await db.execute(`
+      UPDATE wa_conversations c
+      SET c.plantilla = 'medica'
+      WHERE (c.plantilla IS NULL OR c.plantilla = '')
+        AND EXISTS (
+          SELECT 1 FROM wa_messages m
+          WHERE m.conversation_id = c.id
+            AND (
+              LOWER(m.body) LIKE '%cita medica%'
+              OR LOWER(m.body) LIKE '%cita médica%'
+              OR LOWER(m.body) LIKE '%tipo de cita%'
+            )
+        )
+    `);
+  } catch (err) {
+    console.warn('[WA] backfill chat:', err.message);
+  }
+}
+
 async function start() {
   await db.initPool();
   await db.ensureSchema();
   await backfillRsvpFromMessages();
+  await backfillChatMeta();
   await sessionStore.onReady();
   console.log(`[wa-inbox] Sesión: ${SESSION_DAYS} días · store MySQL (wa_sessions)`);
 

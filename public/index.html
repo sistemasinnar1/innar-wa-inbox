@@ -68,6 +68,10 @@
         <aside class="wa-sidebar">
           <div class="wa-search-wrap">
             <input type="search" id="waSearchInput" class="wa-search" placeholder="Buscar paciente o teléfono…" />
+            <div class="wa-chat-filters" role="toolbar" aria-label="Filtrar chats">
+              <button type="button" class="wa-chat-filter is-active" data-chat-filter="todos">Todos</button>
+              <button type="button" class="wa-chat-filter" data-chat-filter="noleidos">No leídos</button>
+            </div>
           </div>
           <div id="waConvList" class="wa-conv-list"></div>
         </aside>
@@ -86,9 +90,13 @@
                 <div id="waThreadPhone" class="wa-thread-phone">—</div>
                 <div id="waThreadRsvp" class="wa-thread-rsvp"></div>
               </div>
+              <span id="waThreadWindow" class="wa-window-pill"></span>
               <button type="button" id="btnDeleteChat" class="wa-btn-danger">Eliminar</button>
             </header>
             <div id="waMessageList" class="wa-message-list"></div>
+            <div id="waCitaBar" class="wa-cita-bar hidden"></div>
+            <div id="waQuick" class="wa-quick hidden"></div>
+            <p id="waComposerHint" class="wa-hint hidden"></p>
             <form id="waReplyForm" class="wa-composer">
               <textarea id="waReplyInput" rows="1" placeholder="Escribir mensaje…" maxlength="4000"></textarea>
               <button type="submit" id="waReplyBtn" class="wa-send-btn" aria-label="Enviar">Enviar</button>
