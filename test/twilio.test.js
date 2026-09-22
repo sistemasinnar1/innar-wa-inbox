@@ -20,6 +20,10 @@ describe('twilio helpers', () => {
     assert.equal(classifyButtonPayload('si_asistire', ''), 'si_asistire');
     assert.equal(classifyButtonPayload('no_asistire', ''), 'no_asistire');
     assert.equal(classifyButtonPayload('escribenos', ''), 'escribenos');
+    assert.equal(classifyButtonPayload('', 'No asistiré'), 'no_asistire');
+    // No marcar por un "no" suelto en cualquier texto (evita falsos cancelados)
+    assert.equal(classifyButtonPayload('', 'No puedo mañana, gracias'), '');
+    assert.equal(classifyButtonPayload('', 'Hola'), '');
   });
 
   it('displayInboundText con emojis', () => {

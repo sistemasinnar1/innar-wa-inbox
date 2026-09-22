@@ -456,7 +456,16 @@
       if (p.length === 10) p = `57${p}`;
       return p === want;
     });
-    return (found && found.last_rsvp) || null;
+    return found || null;
+  }
+
+  function rsvpKindForEvent(ev) {
+    const conv = rsvpForPhone((ev && (analyzePhone(ev.telefono).phone || ev.telefono)) || '');
+    if (!conv || !conv.last_rsvp) return null;
+    // Sin event_id vinculado no aplicar a todas las citas del teléfono (evita falsos cancelados)
+    if (!conv.last_rsvp_event_id || !ev || !ev.event_id) return null;
+    if (String(conv.last_rsvp_event_id) !== String(ev.event_id)) return null;
+    return conv.last_rsvp;
   }
 
   function rsvpBadgeHtml(rsvp) {
@@ -472,9 +481,9 @@
     return '';
   }
 
-  /** Estado visual: confirmado | cancelado | null (manual o respuesta WhatsApp). */
+  /** Estado visual: confirmado | cancelado | null (manual o respuesta WhatsApp de ESA cita). */
   function eventAttendance(ev) {
-    const rsvp = rsvpForPhone((ev && (analyzePhone(ev.telefono).phone || ev.telefono)) || '');
+    const rsvp = rsvpKindForEvent(ev);
     if (rsvp === 'si_asistire') return 'confirmado';
     if (rsvp === 'no_asistire') return 'cancelado';
     const manual = String((ev && ev.attendance) || '').toLowerCase();
@@ -505,7 +514,7 @@
       telefono: ev.telefono,
       attendance: ev.attendance || null
     }));
-    const rsvp = rsvpForPhone(phone || ev.telefono);
+    const rsvp = rsvpKindForEvent(ev);
     const attendance = eventAttendance(ev);
     const canToggle = !!ev.event_id;
 
@@ -568,7 +577,7 @@
     const st = analyzePhone(ev.telefono);
     const sent = eventIsSent(ev);
     const attendance = eventAttendance(ev);
-    const rsvp = rsvpForPhone(st.phone || ev.telefono);
+    const rsvp = rsvpKindForEvent(ev);
     if (eventFilter === 'pending') return !sent && st.ok;
     if (eventFilter === 'sent') return sent;
     if (eventFilter === 'phone') return !st.ok;
@@ -589,7 +598,7 @@
       const st = analyzePhone(ev.telefono);
       const sent = eventIsSent(ev);
       const attendance = eventAttendance(ev);
-      const rsvp = rsvpForPhone(st.phone || ev.telefono);
+      const rsvp = rsvpKindForEvent(ev);
       if (sent) counts.sent += 1;
       else if (st.ok) counts.pending += 1;
       if (!st.ok) counts.phone += 1;

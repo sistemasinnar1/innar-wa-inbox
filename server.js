@@ -137,6 +137,7 @@ function mapConversation(row) {
     unread_count: Number(row.unread_count) || 0,
     last_rsvp: row.last_rsvp || null,
     last_rsvp_at: row.last_rsvp_at || null,
+    last_rsvp_event_id: row.last_rsvp_event_id || null,
     last_inbound_at: row.last_inbound_at || null,
     last_direction: row.last_direction || null,
     window_open: windowOpenFrom(row.last_inbound_at),
@@ -231,10 +232,15 @@ app.post('/api/webhook', async (req, res) => {
   setImmediate(async () => {
     try {
       const p = req.body || {};
+      // Ignorar status callbacks (sent/delivered/failed): no son respuestas del paciente
+      const smsStatus = String(p.SmsStatus || p.MessageStatus || '').toLowerCase();
+      if (smsStatus && smsStatus !== 'received') return;
+
       const phone = wa.normalizeWaPhone(p.From || '');
       if (!phone) return;
 
       const rawBody = String(p.Body || '').trim();
+      // Preferir ButtonPayload (id). ButtonText solo si no hay payload.
       const buttonPayload = String(p.ButtonPayload || p.ButtonText || '').trim();
       const displayBody = wa.displayInboundText(rawBody, buttonPayload);
       const profileName = String(p.ProfileName || '').trim() || null;
@@ -250,7 +256,10 @@ app.post('/api/webhook', async (req, res) => {
         status: 'received'
       });
 
-      if (!inserted.duplicate && conv.plantilla === 'terapia') {
+      // SID duplicado = probablemente status callback del mismo mensaje saliente
+      if (inserted.duplicate) return;
+
+      if (conv.plantilla === 'terapia') {
         await touchConversation(conv.id, {
           preview: wa.previewText(displayBody),
           incrementUnread: true,
@@ -283,7 +292,18 @@ app.post('/api/webhook', async (req, res) => {
             conversationId: conv.id,
             originalRepliedMessageSid: p.OriginalRepliedMessageSid || ''
           })
-            .then((r) => {
+            .then(async (r) => {
+              const eventId = r.items && r.items[0] && r.items[0].event_id;
+              if (eventId) {
+                await db.execute(
+                  `UPDATE wa_conversations
+                   SET last_rsvp = ?, last_rsvp_at = NOW(), last_rsvp_event_id = ?
+                   WHERE id = ?`,
+                  [kind, eventId, conv.id]
+                );
+                const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+                if (convFresh) emitWa('wa:message', { conversation: mapConversation(convFresh), message: null });
+              }
               if (r.updated) {
                 console.log(`[WA] Calendario: ${r.updated} evento(s) → ${status} (${phone})`);
                 emitWa('wa:calendar_attendance', {
