@@ -128,6 +128,7 @@ function windowOpenFrom(lastInbound) {
 
 function mapConversation(row) {
   if (!row) return null;
+  const plantilla = row.plantilla || 'terapia';
   return {
     id: row.id,
     phone: row.phone,
@@ -141,7 +142,7 @@ function mapConversation(row) {
     last_inbound_at: row.last_inbound_at || null,
     last_direction: row.last_direction || null,
     window_open: windowOpenFrom(row.last_inbound_at),
-    plantilla: row.plantilla || null
+    plantilla
   };
 }
 
@@ -162,19 +163,39 @@ function mapMessage(row) {
 async function findOrCreateConversation(phone, displayName) {
   const existing = await db.queryOne('SELECT * FROM wa_conversations WHERE phone = ? LIMIT 1', [phone]);
   if (existing) {
+    const updates = [];
+    const params = [];
     if (displayName && displayName !== existing.display_name) {
-      await db.execute('UPDATE wa_conversations SET display_name = ? WHERE id = ?', [displayName, existing.id]);
+      updates.push('display_name = ?');
+      params.push(displayName);
       existing.display_name = displayName;
+    }
+    if (!existing.plantilla || existing.plantilla === '') {
+      updates.push("plantilla = 'terapia'");
+      existing.plantilla = 'terapia';
+    }
+    if (updates.length) {
+      params.push(existing.id);
+      await db.execute(
+        `UPDATE wa_conversations SET ${updates.join(', ')} WHERE id = ?`,
+        params
+      );
     }
     return existing;
   }
   const result = await db.execute(
-    `INSERT INTO wa_conversations (phone, display_name, last_message_at, unread_count)
-     VALUES (?, ?, NOW(), 0)`,
+    `INSERT INTO wa_conversations (phone, display_name, last_message_at, unread_count, plantilla)
+     VALUES (?, ?, NOW(), 0, 'terapia')`,
     [phone, displayName || null]
   );
   const id = db.insertId(result);
   return db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
+}
+
+/** Esta app es la bandeja de terapia: null/vacío cuenta como terapia. */
+function esPlantillaTerapia(plantilla) {
+  const p = String(plantilla || '').trim().toLowerCase();
+  return !p || p === 'terapia';
 }
 
 async function insertMessage({ conversationId, direction, body, buttonPayload, twilioSid, status }) {
@@ -259,7 +280,7 @@ app.post('/api/webhook', async (req, res) => {
       // SID duplicado = probablemente status callback del mismo mensaje saliente
       if (inserted.duplicate) return;
 
-      if (conv.plantilla === 'terapia') {
+      if (esPlantillaTerapia(conv.plantilla)) {
         await touchConversation(conv.id, {
           preview: wa.previewText(displayBody),
           incrementUnread: true,
@@ -280,7 +301,7 @@ app.post('/api/webhook', async (req, res) => {
         });
       }
 
-      if (conv.plantilla === 'terapia') {
+      if (esPlantillaTerapia(conv.plantilla)) {
       const kind = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kind === 'si_asistire' || kind === 'no_asistire') {
         void wa.forwardToGasWebhook(p);
@@ -579,7 +600,7 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
       rows = await db.query(
         `SELECT * FROM wa_conversations
          WHERE IFNULL(oculto, 0) = 0
-           AND plantilla = 'terapia'
+           AND (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
            AND (phone LIKE ? OR IFNULL(display_name,'') LIKE ?)
          ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
         [like, like, limit]
@@ -588,7 +609,7 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
       rows = await db.query(
         `SELECT * FROM wa_conversations
          WHERE IFNULL(oculto, 0) = 0
-           AND plantilla = 'terapia'
+           AND (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
          ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
         [limit]
       );
@@ -604,8 +625,8 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido' });
     const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
-    if (!conv || conv.plantilla !== 'terapia') return res.status(404).json({ error: 'No encontrada' });
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 80));
+    if (!conv || !esPlantillaTerapia(conv.plantilla)) return res.status(404).json({ error: 'No encontrada' });
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
     const messages = await db.query(
       `SELECT * FROM wa_messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?`,
       [id, limit]
@@ -651,7 +672,7 @@ app.post('/api/conversations/:id/reply', requireAuth, async (req, res) => {
     if (body.length > 4000) return res.status(400).json({ error: 'Mensaje demasiado largo' });
 
     const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
-    if (!conv || conv.plantilla !== 'terapia') return res.status(404).json({ error: 'No encontrada' });
+    if (!conv || !esPlantillaTerapia(conv.plantilla)) return res.status(404).json({ error: 'No encontrada' });
     if (!windowOpenFrom(conv.last_inbound_at)) {
       return res.status(409).json({
         error: 'Fuera de las 24 horas: WhatsApp solo permite responder si el paciente escribió hoy. Puede reenviar el recordatorio desde la cita.',
@@ -765,32 +786,9 @@ async function backfillChatMeta() {
       WHERE c.last_direction IS NULL OR c.last_direction = ''
     `);
     await db.execute(`
-      UPDATE wa_conversations c
-      SET c.plantilla = 'terapia'
-      WHERE (c.plantilla IS NULL OR c.plantilla = '')
-        AND EXISTS (
-          SELECT 1 FROM wa_messages m
-          WHERE m.conversation_id = c.id
-            AND (
-              m.button_payload = 'recordatorio'
-              OR LOWER(m.body) LIKE '%terapia%'
-              OR LOWER(m.body) LIKE '%le recordamos su cita de %'
-            )
-        )
-    `);
-    await db.execute(`
-      UPDATE wa_conversations c
-      SET c.plantilla = 'medica'
-      WHERE (c.plantilla IS NULL OR c.plantilla = '')
-        AND EXISTS (
-          SELECT 1 FROM wa_messages m
-          WHERE m.conversation_id = c.id
-            AND (
-              LOWER(m.body) LIKE '%cita medica%'
-              OR LOWER(m.body) LIKE '%cita médica%'
-              OR LOWER(m.body) LIKE '%tipo de cita%'
-            )
-        )
+      UPDATE wa_conversations
+      SET plantilla = 'terapia'
+      WHERE plantilla IS NULL OR plantilla = ''
     `);
   } catch (err) {
     console.warn('[WA] backfill chat:', err.message);

@@ -984,9 +984,15 @@
     input.style.height = `${Math.min(input.scrollHeight, 128)}px`;
   }
 
+  function esChatTerapia(conv) {
+    if (!conv) return false;
+    const p = String(conv.plantilla || '').trim().toLowerCase();
+    return !p || p === 'terapia';
+  }
+
   async function loadConversations() {
     const data = await api('/api/conversations?limit=300');
-    conversations = (data.conversations || []).filter((c) => c.plantilla === 'terapia');
+    conversations = (data.conversations || []).filter(esChatTerapia);
     renderConvList();
     if (loadedEvents.length) renderEvents();
   }
@@ -1321,8 +1327,8 @@
   }
 
   function upsertConversation(conv) {
-    if (!conv || !conv.id || conv.plantilla !== 'terapia') {
-      if (conv && conv.id) {
+    if (!conv || !conv.id || !esChatTerapia(conv)) {
+      if (conv && conv.id && !esChatTerapia(conv)) {
         conversations = conversations.filter((c) => Number(c.id) !== Number(conv.id));
         if (Number(activeId) === Number(conv.id)) {
           activeId = null;
