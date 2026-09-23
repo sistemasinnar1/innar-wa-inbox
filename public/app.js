@@ -549,13 +549,14 @@
         : '<span class="wa-badge wa-badge-bad">Tel.</span>');
 
     const attendanceHtml = attendanceBadgeHtml(attendance, rsvp);
-    const cardState = futuroSinEnviar
-      ? ' is-future'
-      : (attendance === 'confirmado'
-        ? ' is-confirmado'
-        : (attendance === 'cancelado' ? ' is-cancelado' : ''));
+    // Verde / Reenviar solo si ESTA cita ya tiene recordatorio enviado
+    const cardState = attendance === 'cancelado'
+      ? ' is-cancelado'
+      : (sent
+        ? ' is-sent'
+        : (futuroSinEnviar ? ' is-future' : ''));
 
-    return `<article class="wa-ev-card${sent && !attendance && !futuroSinEnviar ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}${cardState}">
+    return `<article class="wa-ev-card${st.ok ? '' : ' is-phone-bad'}${cardState}">
       <header class="wa-ev-card-top">
         <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
         ${statusHtml}
@@ -686,7 +687,7 @@
         body: JSON.stringify({ date, send: !!send })
       });
 
-      // Flatten events from calendars for the table
+      // Flatten: el servidor marca enviado solo por event_id con recordatorio real
       const prevSent = new Map();
       loadedEvents.forEach((e) => {
         if ((e._enviado || e.enviado) && e.event_id) prevSent.set(String(e.event_id), true);
@@ -694,13 +695,11 @@
       const flat = [];
       (data.calendars || []).forEach((c) => {
         (c.events || []).forEach((ev) => {
-          if (ev.enviado || ev._enviado) {
-            ev._enviado = true;
-            ev.enviado = true;
-          } else if (ev.event_id && prevSent.has(String(ev.event_id))) {
-            ev._enviado = true;
-            ev.enviado = true;
-          }
+          const fromServer = ev.enviado === true || ev._enviado === true;
+          const fromSession = !!(ev.event_id && prevSent.has(String(ev.event_id)));
+          const sent = fromServer || fromSession;
+          ev.enviado = sent;
+          ev._enviado = sent;
           flat.push(ev);
         });
       });
