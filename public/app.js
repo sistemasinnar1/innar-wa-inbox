@@ -397,35 +397,33 @@
     return conversations.some((c) => String(c.phone || '').replace(/\D/g, '') === st.phone);
   }
 
-  /** Enviado = recordatorio de ESTA cita (no de otra del mismo teléfono). */
+  /** Enviado = hay recordatorio guardado para ESTE event_id (nunca por teléfono). */
   function eventIsSent(ev) {
-    if (!ev) return false;
-    if (ev._enviado || ev.enviado) return true;
-    return false;
+    if (!ev || !ev.event_id) return false;
+    return !!(ev._enviado || ev.enviado);
   }
 
   function markEventSent(ev) {
-    if (!ev) return;
-    const key = eventKey(ev);
+    if (!ev || !ev.event_id) return;
+    const id = String(ev.event_id);
     loadedEvents = loadedEvents.map((e) => (
-      eventKey(e) === key || (ev.event_id && e.event_id === ev.event_id)
+      e.event_id && String(e.event_id) === id
         ? { ...e, _enviado: true, enviado: true, telefono: ev.telefono || e.telefono }
         : e
     ));
   }
 
   function patchLoadedEvent(updated) {
-    if (!updated) return;
+    if (!updated || !updated.event_id) return;
     loadedEvents = loadedEvents.map((e) => {
-      if (updated.event_id && e.event_id === updated.event_id) {
-        return {
-          ...e,
-          ...updated,
-          _enviado: e._enviado || updated._enviado || updated.enviado,
-          enviado: e.enviado || e._enviado || updated.enviado || updated._enviado
-        };
-      }
-      return e;
+      if (String(e.event_id) !== String(updated.event_id)) return e;
+      const sent = !!(e._enviado || e.enviado || updated._enviado || updated.enviado);
+      return {
+        ...e,
+        ...updated,
+        _enviado: sent,
+        enviado: sent
+      };
     });
   }
 
@@ -521,7 +519,9 @@
       calendar_key: ev.calendar_key,
       paciente: ev.paciente,
       telefono: ev.telefono,
-      attendance: ev.attendance || null
+      start_iso: ev.start_iso || null,
+      attendance: ev.attendance || null,
+      enviado: !!eventIsSent(ev)
     }));
     const rsvp = rsvpKindForEvent(ev);
     const attendance = eventAttendance(ev);
@@ -687,17 +687,16 @@
         body: JSON.stringify({ date, send: !!send })
       });
 
-      // Flatten: el servidor marca enviado solo por event_id con recordatorio real
-      const prevSent = new Map();
+      // Flatten: solo event_id con recordatorio en BD (o enviado en esta sesión)
+      const prevSent = new Set();
       loadedEvents.forEach((e) => {
-        if ((e._enviado || e.enviado) && e.event_id) prevSent.set(String(e.event_id), true);
+        if ((e._enviado || e.enviado) && e.event_id) prevSent.add(String(e.event_id));
       });
       const flat = [];
       (data.calendars || []).forEach((c) => {
         (c.events || []).forEach((ev) => {
-          const fromServer = ev.enviado === true || ev._enviado === true;
-          const fromSession = !!(ev.event_id && prevSent.has(String(ev.event_id)));
-          const sent = fromServer || fromSession;
+          const id = ev && ev.event_id ? String(ev.event_id) : '';
+          const sent = !!(id && (ev.enviado === true || ev._enviado === true || prevSent.has(id)));
           ev.enviado = sent;
           ev._enviado = sent;
           flat.push(ev);

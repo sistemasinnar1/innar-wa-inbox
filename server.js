@@ -541,7 +541,8 @@ app.patch('/api/calendars/events/attendance', requireAuth, async (req, res) => {
     const updated = await cal.updateEventAttendance({
       calendarKey: String(b.calendar_key || '').trim(),
       eventId: String(b.event_id || '').trim(),
-      status: b.status
+      status: b.status,
+      paintGooglePink: false
     });
     res.json({ event: updated });
   } catch (e) {
