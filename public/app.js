@@ -397,26 +397,44 @@
     return conversations.some((c) => String(c.phone || '').replace(/\D/g, '') === st.phone);
   }
 
-  /** Enviado = hay recordatorio guardado para ESTE event_id (nunca por teléfono). */
+  function bogotaYmdFromIso(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(d);
+  }
+
+  /** Enviado = recordatorio de ESTE event_id en ESTE día (start_iso). */
   function eventIsSent(ev) {
-    if (!ev || !ev.event_id) return false;
+    if (!ev || !ev.event_id || !ev.start_iso) return false;
     return !!(ev._enviado || ev.enviado);
   }
 
   function markEventSent(ev) {
-    if (!ev || !ev.event_id) return;
+    if (!ev || !ev.event_id || !ev.start_iso) return;
     const id = String(ev.event_id);
-    loadedEvents = loadedEvents.map((e) => (
-      e.event_id && String(e.event_id) === id
-        ? { ...e, _enviado: true, enviado: true, telefono: ev.telefono || e.telefono }
-        : e
-    ));
+    const ymd = bogotaYmdFromIso(ev.start_iso);
+    loadedEvents = loadedEvents.map((e) => {
+      if (!e.event_id || String(e.event_id) !== id) return e;
+      const eYmd = bogotaYmdFromIso(e.start_iso);
+      if (eYmd && ymd && eYmd !== ymd) return e;
+      return { ...e, _enviado: true, enviado: true, telefono: ev.telefono || e.telefono };
+    });
   }
 
   function patchLoadedEvent(updated) {
     if (!updated || !updated.event_id) return;
     loadedEvents = loadedEvents.map((e) => {
       if (String(e.event_id) !== String(updated.event_id)) return e;
+      if (updated.start_iso && e.start_iso) {
+        const a = bogotaYmdFromIso(updated.start_iso);
+        const b = bogotaYmdFromIso(e.start_iso);
+        if (a && b && a !== b) return e;
+      }
       const sent = !!(e._enviado || e.enviado || updated._enviado || updated.enviado);
       return {
         ...e,
@@ -687,16 +705,11 @@
         body: JSON.stringify({ date, send: !!send })
       });
 
-      // Flatten: solo event_id con recordatorio en BD (o enviado en esta sesión)
-      const prevSent = new Set();
-      loadedEvents.forEach((e) => {
-        if ((e._enviado || e.enviado) && e.event_id) prevSent.add(String(e.event_id));
-      });
+      // Confiar en el servidor (event_id + día). No reusar «enviados» de otra fecha.
       const flat = [];
       (data.calendars || []).forEach((c) => {
         (c.events || []).forEach((ev) => {
-          const id = ev && ev.event_id ? String(ev.event_id) : '';
-          const sent = !!(id && (ev.enviado === true || ev._enviado === true || prevSent.has(id)));
+          const sent = ev.enviado === true || ev._enviado === true;
           ev.enviado = sent;
           ev._enviado = sent;
           flat.push(ev);
