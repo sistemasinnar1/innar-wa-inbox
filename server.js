@@ -404,6 +404,7 @@ app.get('/api/calendars/events', requireAuth, async (req, res) => {
     }
     const listed = await cal.listEventsForDate(date);
     await reminders.annotateSentOnListed(listed);
+    await reminders.syncUnsentFutureColors(listed);
     res.json(listed);
   } catch (e) {
     res.status(500).json({ error: e.message, code: e.code });
@@ -432,6 +433,7 @@ app.post('/api/calendars/sync', requireAuth, async (req, res) => {
       emit: emitWa
     });
     await reminders.annotateSentOnListed(result.listed);
+    await reminders.syncUnsentFutureColors(result.listed);
     const sentOk = (result.sendResults || []).filter((r) => r.ok).length;
     const sentFail = (result.sendResults || []).filter((r) => !r.ok).length;
     res.json({

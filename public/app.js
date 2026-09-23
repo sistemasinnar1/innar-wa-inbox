@@ -513,6 +513,7 @@
     const st = analyzePhone(ev.telefono);
     const phone = st.phone || '';
     const sent = eventIsSent(ev);
+    const futuroSinEnviar = !sent && ev.start_iso && Date.parse(ev.start_iso) > Date.now();
     const canSend = st.ok && !sent;
     const canResend = st.ok && sent;
     const evJson = esc(JSON.stringify({
@@ -548,11 +549,13 @@
         : '<span class="wa-badge wa-badge-bad">Tel.</span>');
 
     const attendanceHtml = attendanceBadgeHtml(attendance, rsvp);
-    const cardState = attendance === 'confirmado'
-      ? ' is-confirmado'
-      : (attendance === 'cancelado' ? ' is-cancelado' : '');
+    const cardState = futuroSinEnviar
+      ? ' is-future'
+      : (attendance === 'confirmado'
+        ? ' is-confirmado'
+        : (attendance === 'cancelado' ? ' is-cancelado' : ''));
 
-    return `<article class="wa-ev-card${sent && !attendance ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}${cardState}">
+    return `<article class="wa-ev-card${sent && !attendance && !futuroSinEnviar ? ' is-sent' : ''}${st.ok ? '' : ' is-phone-bad'}${cardState}">
       <header class="wa-ev-card-top">
         <div class="wa-ev-time">${esc(ev.hora || '—')}</div>
         ${statusHtml}

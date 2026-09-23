@@ -447,6 +447,16 @@ body {
   border-color: rgba(31, 107, 69, 0.22);
 }
 
+.wa-ev-card.is-future {
+  background: #fff;
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.wa-ev-card.is-future .wa-ev-time {
+  color: #3d4a55;
+}
+
 .wa-ev-card.is-phone-bad {
   background: rgba(253, 232, 232, 0.45);
   border-color: rgba(163, 32, 32, 0.2);
