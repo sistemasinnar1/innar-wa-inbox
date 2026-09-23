@@ -397,8 +397,11 @@
     return conversations.some((c) => String(c.phone || '').replace(/\D/g, '') === st.phone);
   }
 
+  /** Enviado = recordatorio de ESTA cita (no de otra del mismo teléfono). */
   function eventIsSent(ev) {
-    return !!(ev && (ev._enviado || eventHasChat(ev)));
+    if (!ev) return false;
+    if (ev._enviado || ev.enviado) return true;
+    return false;
   }
 
   function markEventSent(ev) {
@@ -406,7 +409,7 @@
     const key = eventKey(ev);
     loadedEvents = loadedEvents.map((e) => (
       eventKey(e) === key || (ev.event_id && e.event_id === ev.event_id)
-        ? { ...e, _enviado: true, telefono: ev.telefono || e.telefono }
+        ? { ...e, _enviado: true, enviado: true, telefono: ev.telefono || e.telefono }
         : e
     ));
   }
@@ -415,7 +418,12 @@
     if (!updated) return;
     loadedEvents = loadedEvents.map((e) => {
       if (updated.event_id && e.event_id === updated.event_id) {
-        return { ...e, ...updated, _enviado: e._enviado };
+        return {
+          ...e,
+          ...updated,
+          _enviado: e._enviado || updated._enviado || updated.enviado,
+          enviado: e.enviado || e._enviado || updated.enviado || updated._enviado
+        };
       }
       return e;
     });
@@ -678,13 +686,18 @@
       // Flatten events from calendars for the table
       const prevSent = new Map();
       loadedEvents.forEach((e) => {
-        if (e._enviado && e.event_id) prevSent.set(String(e.event_id), true);
+        if ((e._enviado || e.enviado) && e.event_id) prevSent.set(String(e.event_id), true);
       });
       const flat = [];
       (data.calendars || []).forEach((c) => {
         (c.events || []).forEach((ev) => {
-          if (ev.event_id && prevSent.has(String(ev.event_id))) ev._enviado = true;
-          else if (eventHasChat(ev)) ev._enviado = true;
+          if (ev.enviado || ev._enviado) {
+            ev._enviado = true;
+            ev.enviado = true;
+          } else if (ev.event_id && prevSent.has(String(ev.event_id))) {
+            ev._enviado = true;
+            ev.enviado = true;
+          }
           flat.push(ev);
         });
       });
@@ -712,13 +725,6 @@
       if (send && data.send_results) {
         data.send_results.forEach((r) => {
           if (r.ok && r.event) markEventSent(r.event);
-          else if (r.ok && r.phone) {
-            loadedEvents.forEach((e) => {
-              if (analyzePhone(e.telefono).phone === String(r.phone).replace(/\D/g, '')) {
-                e._enviado = true;
-              }
-            });
-          }
         });
         renderEvents();
         const fails = data.send_results.filter((r) => !r.ok);
@@ -968,12 +974,7 @@
     const data = await api('/api/conversations?limit=300');
     conversations = (data.conversations || []).filter((c) => c.plantilla === 'terapia');
     renderConvList();
-    if (loadedEvents.length) {
-      loadedEvents.forEach((ev) => {
-        if (eventHasChat(ev)) ev._enviado = true;
-      });
-      renderEvents();
-    }
+    if (loadedEvents.length) renderEvents();
   }
 
   async function openConversation(id) {
@@ -1044,7 +1045,7 @@
       }
     }
     if (eventIsSent(ev)) {
-      const go = window.confirm('Este paciente ya tiene chat / fue marcado como enviado.\n¿Reenviar el recordatorio?');
+      const go = window.confirm('Este recordatorio de esta cita ya fue enviado.\n¿Reenviar?');
       if (!go) {
         if (openChatAfter) await openChatByPhone(st.phone, ev);
         return null;
