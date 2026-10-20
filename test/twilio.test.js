@@ -8,7 +8,11 @@ const {
   classifyButtonPayload,
   validateTwilioSignature,
   previewText,
-  displayInboundText
+  displayInboundText,
+  shouldUpdateDeliveryStatus,
+  humanizeDeliveryError,
+  isDeliveryStatusCallback,
+  normalizeDeliveryStatus
 } = require('../lib/twilio');
 
 describe('twilio helpers', () => {
@@ -57,5 +61,28 @@ describe('twilio helpers', () => {
   it('previewText', () => {
     assert.equal(previewText('abc', 10), 'abc');
     assert.ok(previewText('a'.repeat(20), 10).endsWith('…'));
+  });
+
+  it('normalizeDeliveryStatus y avance de estados', () => {
+    assert.equal(normalizeDeliveryStatus('Delivered'), 'delivered');
+    assert.equal(normalizeDeliveryStatus('foo'), '');
+    assert.equal(shouldUpdateDeliveryStatus('queued', 'sent'), true);
+    assert.equal(shouldUpdateDeliveryStatus('delivered', 'sent'), false);
+    assert.equal(shouldUpdateDeliveryStatus('sent', 'delivered'), true);
+    assert.equal(shouldUpdateDeliveryStatus('delivered', 'read'), true);
+    assert.equal(shouldUpdateDeliveryStatus('sent', 'failed'), true);
+    assert.equal(shouldUpdateDeliveryStatus('failed', 'delivered'), false);
+  });
+
+  it('humanizeDeliveryError número sin WhatsApp', () => {
+    assert.match(humanizeDeliveryError('63003', ''), /WhatsApp/i);
+    assert.match(humanizeDeliveryError('21211', ''), /inválido/i);
+    assert.equal(humanizeDeliveryError('', 'Custom'), 'Custom');
+  });
+
+  it('isDeliveryStatusCallback', () => {
+    assert.equal(isDeliveryStatusCallback({ MessageStatus: 'delivered', MessageSid: 'SMx' }), true);
+    assert.equal(isDeliveryStatusCallback({ SmsStatus: 'received', From: 'whatsapp:+57' }), false);
+    assert.equal(isDeliveryStatusCallback({ Body: 'hola' }), false);
   });
 });

@@ -156,8 +156,55 @@ function mapMessage(row) {
     button_payload: row.button_payload,
     twilio_sid: row.twilio_sid,
     status: row.status,
+    error_code: row.error_code || null,
+    error_message: row.error_message || null,
     created_at: row.created_at
   };
+}
+
+async function applyDeliveryStatusUpdate(params) {
+  const p = params || {};
+  const sid = String(p.MessageSid || p.SmsSid || '').trim();
+  const nextStatus = wa.normalizeDeliveryStatus(p.MessageStatus || p.SmsStatus || '');
+  if (!sid || !nextStatus) return null;
+
+  const row = await db.queryOne(
+    `SELECT * FROM wa_messages WHERE twilio_sid = ? AND direction = 'out' LIMIT 1`,
+    [sid]
+  );
+  if (!row) return null;
+  if (!wa.shouldUpdateDeliveryStatus(row.status, nextStatus)) return null;
+
+  const errCode = String(p.ErrorCode || '').trim() || null;
+  const errMsg = (nextStatus === 'failed' || nextStatus === 'undelivered')
+    ? wa.humanizeDeliveryError(errCode, p.ErrorMessage || p.ErrorMsg || '')
+    : null;
+
+  await db.execute(
+    `UPDATE wa_messages
+     SET status = ?,
+         error_code = ?,
+         error_message = ?
+     WHERE id = ?`,
+    [nextStatus, errCode, errMsg, row.id]
+  );
+
+  const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [row.id]);
+  const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [row.conversation_id]);
+  const payload = {
+    conversation: mapConversation(conv),
+    message: mapMessage(msgRow)
+  };
+  emitWa('wa:message', payload);
+  emitWa('wa:status', payload);
+  if (nextStatus === 'failed' || nextStatus === 'undelivered') {
+    console.warn(
+      `[WA] Entrega fallida sid=${sid} status=${nextStatus}`
+      + (errCode ? ` code=${errCode}` : '')
+      + (errMsg ? ` — ${errMsg}` : '')
+    );
+  }
+  return payload;
 }
 
 async function findOrCreateConversation(phone, displayName) {
@@ -253,7 +300,12 @@ app.post('/api/webhook', async (req, res) => {
   setImmediate(async () => {
     try {
       const p = req.body || {};
-      // Ignorar status callbacks (sent/delivered/failed): no son respuestas del paciente
+      // Callbacks de entrega (sent/delivered/read/failed) → actualizar palomitas en el chat
+      if (wa.isDeliveryStatusCallback(p)) {
+        await applyDeliveryStatusUpdate(p);
+        return;
+      }
+
       const smsStatus = String(p.SmsStatus || p.MessageStatus || '').toLowerCase();
       if (smsStatus && smsStatus !== 'received') return;
 

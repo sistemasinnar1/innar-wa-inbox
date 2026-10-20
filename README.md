@@ -21,7 +21,8 @@ Webhook Twilio:
 2. **Enviar recordatorios** → plantilla Twilio a cada paciente con teléfono en el título del evento.
 3. Cada envío crea/actualiza la conversación en la bandeja (queda como mensaje saliente).
 4. Si el paciente responde Sí/No o texto → entra por el webhook y se ve en el mismo chat.
-5. Sí/No también se reenvía a Apps Script (`GAS_WEBHOOK_URL`) si quieren seguir llenando el Sheet.
+5. Twilio avisa la entrega (`StatusCallback` al mismo webhook): en el chat se ven ✓ / ✓✓ / ! (número inválido, sin WhatsApp, etc.).
+6. Sí/No también se reenvía a Apps Script (`GAS_WEBHOOK_URL`) si quieren seguir llenando el Sheet.
 
 ## Google Calendar (obligatorio para cargar/enviar)
 

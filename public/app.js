@@ -765,11 +765,17 @@
     return c.last_direction === 'out' ? `Tú: ${t}` : t;
   }
 
-  function palomitas(status) {
+  function palomitas(status, errorMessage) {
     const s = String(status || '').toLowerCase();
+    const failTitle = String(errorMessage || '').trim() || 'No se pudo entregar';
     if (s === 'read') return '<span class="wa-ticks is-read" title="Leído">✓✓</span>';
     if (s === 'delivered') return '<span class="wa-ticks" title="Entregado">✓✓</span>';
-    if (s === 'failed' || s === 'undelivered') return '<span class="wa-ticks is-fail" title="No salió">!</span>';
+    if (s === 'failed' || s === 'undelivered') {
+      return `<span class="wa-ticks is-fail" title="${esc(failTitle)}">!</span>`;
+    }
+    if (s === 'queued' || s === 'accepted' || s === 'sending') {
+      return '<span class="wa-ticks is-pending" title="Enviando…">✓</span>';
+    }
     return '<span class="wa-ticks" title="Enviado">✓</span>';
   }
 
@@ -840,8 +846,17 @@
       }
       const dir = m.direction === 'out' ? 'out' : 'in';
       const text = displayMessageBody(m);
-      const ticks = dir === 'out' ? palomitas(m.status) : '';
-      parts.push(`<div class="wa-bubble is-${dir}">${esc(text)}<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}${ticks}</span></div>`);
+      const ticks = dir === 'out' ? palomitas(m.status, m.error_message) : '';
+      const failHint = dir === 'out'
+        && (String(m.status || '').toLowerCase() === 'failed'
+          || String(m.status || '').toLowerCase() === 'undelivered')
+        && m.error_message
+        ? `<div class="wa-bubble-error">${esc(m.error_message)}</div>`
+        : '';
+      parts.push(
+        `<div class="wa-bubble is-${dir}">${esc(text)}${failHint}`
+        + `<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}${ticks}</span></div>`
+      );
     });
     box.innerHTML = parts.join('');
     box.scrollTop = box.scrollHeight;
@@ -1347,15 +1362,31 @@
     if (Number(conv.id) === Number(activeId)) showThread(conversations.find((c) => Number(c.id) === Number(activeId)));
   }
 
+  function upsertMessage(msg) {
+    if (!msg) return false;
+    const byId = messages.findIndex((m) => Number(m.id) === Number(msg.id));
+    if (byId >= 0) {
+      messages[byId] = { ...messages[byId], ...msg };
+      return true;
+    }
+    if (msg.twilio_sid) {
+      const bySid = messages.findIndex((m) => m.twilio_sid && m.twilio_sid === msg.twilio_sid);
+      if (bySid >= 0) {
+        messages[bySid] = { ...messages[bySid], ...msg };
+        return true;
+      }
+    }
+    messages.push(msg);
+    return true;
+  }
+
   function onWaMessage(payload) {
     const conv = payload && payload.conversation;
     const msg = payload && payload.message;
     if (conv) upsertConversation(conv);
     if (loadedEvents.length) renderEvents();
     if (!msg || Number(msg.conversation_id) !== Number(activeId)) return;
-    if (messages.some((m) => Number(m.id) === Number(msg.id))) return;
-    if (msg.twilio_sid && messages.some((m) => m.twilio_sid === msg.twilio_sid)) return;
-    messages.push(msg);
+    upsertMessage(msg);
     renderMessages();
   }
 
@@ -1363,6 +1394,7 @@
     if (typeof io !== 'function') return;
     const sock = io({ path: '/socket.io/', withCredentials: true });
     sock.on('wa:message', onWaMessage);
+    sock.on('wa:status', onWaMessage);
     sock.on('wa:calendar_attendance', (payload) => {
       const events = (payload && payload.events) || [];
       if (!events.length) return;

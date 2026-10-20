@@ -1270,9 +1270,18 @@ body {
 
 .wa-ticks { margin-left: 4px; letter-spacing: -0.08em; }
 .wa-ticks.is-read { color: #1d4ed8; }
-.wa-ticks.is-fail { color: #a32020; }
+.wa-ticks.is-fail { color: #a32020; font-weight: 700; }
+.wa-ticks.is-pending { opacity: 0.55; }
 .wa-bubble.is-out .wa-ticks { color: rgba(15, 81, 50, 0.7); }
 .wa-bubble.is-out .wa-ticks.is-read { color: #1d4ed8; }
+.wa-bubble.is-out .wa-ticks.is-fail { color: #a32020; }
+.wa-bubble-error {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  color: #a32020;
+  font-weight: 500;
+}
 
 .wa-hint {
   margin: 0;
