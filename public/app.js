@@ -1438,12 +1438,41 @@
     return true;
   }
 
+  function previewFromMessage(msg) {
+    if (!msg) return '';
+    const text = displayMessageBody(msg);
+    const t = String(text || '').replace(/\s+/g, ' ').trim();
+    if (t.length <= 160) return t;
+    return `${t.slice(0, 159)}…`;
+  }
+
   function onWaMessage(payload) {
-    const conv = payload && payload.conversation;
+    let conv = payload && payload.conversation ? { ...payload.conversation } : null;
     const msg = payload && payload.message;
+    // Si llega un mensaje nuevo, la lista debe mostrar ESE texto (no el recordatorio viejo)
+    if (msg && conv && Number(msg.conversation_id) === Number(conv.id)) {
+      const prevText = previewFromMessage(msg);
+      if (prevText) {
+        conv.last_message_preview = prevText;
+        conv.last_direction = msg.direction === 'out' ? 'out' : 'in';
+        if (msg.created_at) conv.last_message_at = msg.created_at;
+      }
+      if (msg.direction === 'in' && Number(activeId) !== Number(msg.conversation_id)) {
+        conv.unread_count = Math.max(1, Number(conv.unread_count) || 0);
+      }
+    }
     if (conv) upsertConversation(conv);
     if (loadedEvents.length) renderEvents();
     if (!msg || Number(msg.conversation_id) !== Number(activeId)) return;
+    upsertMessage(msg);
+    renderMessages();
+  }
+
+  function onWaStatus(payload) {
+    const msg = payload && payload.message;
+    if (!msg) return;
+    // Solo actualizar palomitas del mensaje; no tocar preview de la lista
+    if (Number(msg.conversation_id) !== Number(activeId)) return;
     upsertMessage(msg);
     renderMessages();
   }
@@ -1452,7 +1481,7 @@
     if (typeof io !== 'function') return;
     const sock = io({ path: '/socket.io/', withCredentials: true });
     sock.on('wa:message', onWaMessage);
-    sock.on('wa:status', onWaMessage);
+    sock.on('wa:status', onWaStatus);
     sock.on('wa:calendar_attendance', (payload) => {
       const events = (payload && payload.events) || [];
       if (!events.length) return;

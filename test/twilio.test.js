@@ -84,5 +84,11 @@ describe('twilio helpers', () => {
     assert.equal(isDeliveryStatusCallback({ MessageStatus: 'delivered', MessageSid: 'SMx' }), true);
     assert.equal(isDeliveryStatusCallback({ SmsStatus: 'received', From: 'whatsapp:+57' }), false);
     assert.equal(isDeliveryStatusCallback({ Body: 'hola' }), false);
+    // Botón del paciente nunca es status de entrega
+    assert.equal(isDeliveryStatusCallback({
+      MessageStatus: 'delivered',
+      ButtonPayload: 'si_asistire',
+      From: 'whatsapp:+573001112233'
+    }), false);
   });
 });

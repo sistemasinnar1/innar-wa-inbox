@@ -228,7 +228,7 @@ async function applyDeliveryStatusUpdate(params, { attempt = 0 } = {}) {
     conversation: mapConversation(conv),
     message: mapMessage(msgRow)
   };
-  emitWa('wa:message', payload);
+  // Solo wa:status: no reenviar como wa:message (evita pisar preview/UI del hilo)
   emitWa('wa:status', payload);
   if (nextStatus === 'failed' || nextStatus === 'undelivered') {
     console.warn(
@@ -303,7 +303,7 @@ async function touchConversation(conversationId, { preview, incrementUnread, dir
     await db.execute(
       `UPDATE wa_conversations
        SET last_message_at = NOW(), last_message_preview = ?, unread_count = unread_count + 1,
-           last_direction = COALESCE(?, last_direction),
+           last_direction = ?,
            last_inbound_at = IF(? = 'in', NOW(), last_inbound_at),
            oculto = 0
        WHERE id = ?`,
@@ -319,6 +319,46 @@ async function touchConversation(conversationId, { preview, incrementUnread, dir
       [preview, dir, conversationId]
     );
   }
+}
+
+/** Alinea preview/dirección del chat con el último mensaje real (evita preview “pegado” al recordatorio). */
+async function syncConversationFromLastMessage(conversationId, { bumpUnread = false } = {}) {
+  const last = await db.queryOne(
+    `SELECT id, body, direction, created_at
+     FROM wa_messages
+     WHERE conversation_id = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [conversationId]
+  );
+  if (!last) return null;
+  const preview = wa.previewText(last.body || '');
+  const dir = last.direction === 'in' || last.direction === 'out' ? last.direction : null;
+  if (bumpUnread && dir === 'in') {
+    await db.execute(
+      `UPDATE wa_conversations
+       SET last_message_at = COALESCE(?, NOW()),
+           last_message_preview = ?,
+           last_direction = 'in',
+           last_inbound_at = NOW(),
+           unread_count = unread_count + 1,
+           oculto = 0
+       WHERE id = ?`,
+      [last.created_at || null, preview, conversationId]
+    );
+  } else {
+    await db.execute(
+      `UPDATE wa_conversations
+       SET last_message_at = COALESCE(?, NOW()),
+           last_message_preview = ?,
+           last_direction = COALESCE(?, last_direction),
+           last_inbound_at = IF(? = 'in', COALESCE(last_inbound_at, NOW()), last_inbound_at),
+           oculto = 0
+       WHERE id = ?`,
+      [last.created_at || null, preview, dir, dir, conversationId]
+    );
+  }
+  return db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conversationId]);
 }
 
 app.get('/api/health', (req, res) => {
@@ -396,18 +436,13 @@ app.post('/api/webhook', async (req, res) => {
         status: 'received'
       });
 
-      // SID duplicado: reconciliar preview/unread (retry Twilio tras fallo parcial)
+      // SID duplicado: reconciliar preview (retry Twilio tras fallo parcial)
       if (inserted.duplicate) {
         const existingMsg = messageSid
           ? await db.queryOne('SELECT * FROM wa_messages WHERE twilio_sid = ? LIMIT 1', [messageSid])
           : null;
         if (existingMsg && existingMsg.direction === 'in') {
-          await touchConversation(conv.id, {
-            preview: wa.previewText(displayBody || existingMsg.body || ''),
-            incrementUnread: false,
-            direction: 'in'
-          });
-          const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+          const convFresh = await syncConversationFromLastMessage(conv.id, { bumpUnread: false });
           emitWa('wa:message', {
             conversation: mapConversation(convFresh),
             message: mapMessage(existingMsg)
@@ -418,11 +453,7 @@ app.post('/api/webhook', async (req, res) => {
         return;
       }
 
-      await touchConversation(conv.id, {
-        preview: wa.previewText(displayBody),
-        incrementUnread: true,
-        direction: 'in'
-      });
+      const convFresh = await syncConversationFromLastMessage(conv.id, { bumpUnread: true });
       const kindEarly = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kindEarly === 'si_asistire' || kindEarly === 'no_asistire' || kindEarly === 'escribenos') {
         await db.execute(
@@ -430,10 +461,13 @@ app.post('/api/webhook', async (req, res) => {
           [kindEarly, conv.id]
         );
       }
-      const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+      const convEmit = kindEarly
+        ? await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id])
+        : convFresh;
       const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
+      console.log(`[WA] Inbound ${phone} → conv #${conv.id}: ${wa.previewText(displayBody, 80)}`);
       emitWa('wa:message', {
-        conversation: mapConversation(convFresh),
+        conversation: mapConversation(convEmit || convFresh),
         message: mapMessage(msgRow)
       });
 
@@ -746,25 +780,47 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     const limit = Math.min(300, Math.max(1, parseInt(req.query.limit, 10) || 80));
+    // Último mensaje real → preview fiable (aunque la columna del chat esté desfasada)
+    const baseSql = `
+      SELECT c.*,
+             lm.body AS _last_body,
+             lm.direction AS _last_direction,
+             lm.created_at AS _last_msg_at
+      FROM wa_conversations c
+      LEFT JOIN wa_messages lm ON lm.id = (
+        SELECT m.id FROM wa_messages m
+        WHERE m.conversation_id = c.id
+        ORDER BY m.id DESC
+        LIMIT 1
+      )
+      WHERE (c.plantilla = 'terapia' OR c.plantilla IS NULL OR c.plantilla = '')`;
     let rows;
     if (q) {
       const like = `%${q.replace(/[%_]/g, '')}%`;
       rows = await db.query(
-        `SELECT * FROM wa_conversations
-         WHERE (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
-           AND (phone LIKE ? OR IFNULL(display_name,'') LIKE ?)
-         ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
+        `${baseSql}
+           AND (c.phone LIKE ? OR IFNULL(c.display_name,'') LIKE ?)
+         ORDER BY IFNULL(lm.created_at, IFNULL(c.last_message_at, c.created_at)) DESC
+         LIMIT ?`,
         [like, like, limit]
       );
     } else {
       rows = await db.query(
-        `SELECT * FROM wa_conversations
-         WHERE (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
-         ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
+        `${baseSql}
+         ORDER BY IFNULL(lm.created_at, IFNULL(c.last_message_at, c.created_at)) DESC
+         LIMIT ?`,
         [limit]
       );
     }
-    res.json({ conversations: rows.map(mapConversation) });
+    const conversations = rows.map((row) => {
+      if (row._last_body != null) {
+        row.last_message_preview = wa.previewText(row._last_body);
+        if (row._last_direction) row.last_direction = row._last_direction;
+        if (row._last_msg_at) row.last_message_at = row._last_msg_at;
+      }
+      return mapConversation(row);
+    });
+    res.json({ conversations });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -782,6 +838,7 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
       [id, limit]
     );
     messages.reverse();
+    await syncConversationFromLastMessage(id, { bumpUnread: false });
     await db.execute('UPDATE wa_conversations SET unread_count = 0 WHERE id = ?', [id]);
     const fresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
     const mapped = mapConversation(fresh);
@@ -841,13 +898,8 @@ app.post('/api/conversations/:id/reply', requireAuth, async (req, res) => {
       twilioSid: sent.sid,
       status: sent.status || 'sent'
     });
-    await touchConversation(conv.id, {
-      preview: wa.previewText(body),
-      incrementUnread: false,
-      direction: 'out'
-    });
+    const convFresh = await syncConversationFromLastMessage(conv.id, { bumpUnread: false });
     const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
-    const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
     const payload = {
       conversation: mapConversation(convFresh),
       message: mapMessage(msgRow)
@@ -956,6 +1008,22 @@ async function backfillChatMeta() {
     // Restaurar chats que se habían ocultado con el botón Eliminar (ya deshabilitado)
     await db.execute(`
       UPDATE wa_conversations SET oculto = 0 WHERE IFNULL(oculto, 0) <> 0
+    `);
+    // Preview / dirección = último mensaje real (corrige chats “pegados” al recordatorio)
+    await db.execute(`
+      UPDATE wa_conversations c
+      INNER JOIN (
+        SELECT m.conversation_id, m.body, m.direction, m.created_at
+        FROM wa_messages m
+        INNER JOIN (
+          SELECT conversation_id, MAX(id) AS max_id
+          FROM wa_messages
+          GROUP BY conversation_id
+        ) t ON t.max_id = m.id
+      ) x ON x.conversation_id = c.id
+      SET c.last_message_preview = LEFT(IFNULL(x.body, ''), 255),
+          c.last_direction = x.direction,
+          c.last_message_at = COALESCE(x.created_at, c.last_message_at)
     `);
   } catch (err) {
     console.warn('[WA] backfill chat:', err.message);
