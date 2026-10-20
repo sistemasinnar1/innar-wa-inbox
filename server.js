@@ -793,13 +793,16 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
         ORDER BY m.id DESC
         LIMIT 1
       )
-      WHERE (c.plantilla = 'terapia' OR c.plantilla IS NULL OR c.plantilla = '')`;
+      WHERE (c.plantilla COLLATE utf8mb4_unicode_ci = 'terapia'
+             OR c.plantilla IS NULL
+             OR c.plantilla COLLATE utf8mb4_unicode_ci = '')`;
     let rows;
     if (q) {
       const like = `%${q.replace(/[%_]/g, '')}%`;
       rows = await db.query(
         `${baseSql}
-           AND (c.phone LIKE ? OR IFNULL(c.display_name,'') LIKE ?)
+           AND (c.phone COLLATE utf8mb4_unicode_ci LIKE ?
+                OR IFNULL(c.display_name, '') COLLATE utf8mb4_unicode_ci LIKE ?)
          ORDER BY IFNULL(lm.created_at, IFNULL(c.last_message_at, c.created_at)) DESC
          LIMIT ?`,
         [like, like, limit]
@@ -1003,7 +1006,8 @@ async function backfillChatMeta() {
     await db.execute(`
       UPDATE wa_conversations
       SET plantilla = 'terapia'
-      WHERE plantilla IS NULL OR plantilla = ''
+      WHERE plantilla IS NULL
+         OR plantilla COLLATE utf8mb4_unicode_ci = ''
     `);
     // Restaurar chats que se habían ocultado con el botón Eliminar (ya deshabilitado)
     await db.execute(`
