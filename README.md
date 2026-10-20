@@ -51,6 +51,10 @@ Sin compartir los calendarios, la API devolverá error de acceso.
 
 Pueden **dejar de enviar** desde Sheets (para no duplicar). El Sheet puede seguir solo como respaldo de confirmaciones vía `GAS_WEBHOOK_URL`.
 
+## Caché / versión de assets
+
+Al arrancar se calcula una versión (`APP_ASSET_VERSION` o hash de JS/CSS/HTML). El HTML sale con `?v=…` en `style.css` y `app.js`, y el cliente consulta `/api/version`: si hay despliegue nuevo con la pestaña abierta, muestra alerta + banner **Recargar ahora**.
+
 ## Local
 
 ```bash

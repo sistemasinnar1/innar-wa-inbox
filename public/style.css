@@ -13,6 +13,78 @@
   --display: "Fraunces", Georgia, serif;
 }
 
+/* Banner: nueva versión desplegada — recargar */
+.wa-update-banner {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 9999;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #1f6b45, #165a38);
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(19, 38, 28, 0.28);
+  font-family: var(--font);
+}
+
+.wa-update-banner.is-visible {
+  display: flex;
+  animation: wa-update-in 0.28s ease-out;
+}
+
+@keyframes wa-update-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.wa-update-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wa-update-banner-text strong {
+  font-size: 0.95rem;
+  font-weight: 750;
+}
+
+.wa-update-banner-text span {
+  font-size: 0.8rem;
+  opacity: 0.92;
+  line-height: 1.35;
+}
+
+.wa-update-banner-btn {
+  flex-shrink: 0;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+  background: #fff;
+  color: #165a38;
+}
+
+.wa-update-banner-btn:hover {
+  background: #f0faf4;
+}
+
+@media (max-width: 560px) {
+  .wa-update-banner {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: left;
+  }
+}
+
 * { box-sizing: border-box; }
 
 body {

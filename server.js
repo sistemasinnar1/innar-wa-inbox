@@ -11,12 +11,16 @@ const session = require('express-session');
 const compression = require('compression');
 const { Server } = require('socket.io');
 
+const fs = require('fs');
 const db = require('./lib/db');
 const wa = require('./lib/twilio');
 const cal = require('./lib/google-calendar');
 const reminders = require('./lib/reminders');
+const { getAppVersion } = require('./lib/app-version');
 const schedule = require('node-schedule');
 const MySQLStore = require('express-mysql-session')(session);
+
+const APP_VERSION = getAppVersion();
 
 const PORT = parseInt(process.env.PORT || '7090', 10) || 7090;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -318,8 +322,37 @@ async function touchConversation(conversationId, { preview, incrementUnread, dir
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, app: 'wa-inbox' });
+  res.json({ ok: true, app: 'wa-inbox', version: APP_VERSION.version });
 });
+
+/** Versión de assets (público): el cliente detecta despliegues y pide recargar. */
+app.get('/api/version', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.json({
+    version: APP_VERSION.version,
+    package: APP_VERSION.package,
+    builtAt: APP_VERSION.builtAt
+  });
+});
+
+function sendVersionedHtml(res, filename) {
+  const filePath = path.join(PUBLIC_DIR, filename);
+  let html;
+  try {
+    html = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    return res.status(500).type('text/plain').send('HTML no disponible');
+  }
+  const v = encodeURIComponent(APP_VERSION.version);
+  html = html.split('{{ASSET_V}}').join(v);
+  res.set({
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0'
+  });
+  return res.send(html);
+}
 
 /** Webhook Twilio — público */
 app.post('/api/webhook', async (req, res) => {
@@ -509,7 +542,9 @@ app.get('/api/status', requireAuth, (req, res) => {
     googleCalendar: cal.googleConfigured(),
     contentSid: !!String(process.env.TWILIO_CONTENT_SID || '').trim(),
     humanoUrl: !!String(process.env.WHATSAPP_HUMANO_URL || '').trim(),
-    calendars: Object.keys(cal.loadCalendarios())
+    calendars: Object.keys(cal.loadCalendarios()),
+    version: APP_VERSION.version,
+    builtAt: APP_VERSION.builtAt
   });
 });
 
@@ -826,14 +861,37 @@ app.post('/api/conversations/:id/reply', requireAuth, async (req, res) => {
 
 app.get('/login', (req, res) => {
   if (req.session?.waAuth) return res.redirect('/');
-  res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
+  return sendVersionedHtml(res, 'login.html');
 });
 
 app.get('/', requireAuth, (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  return sendVersionedHtml(res, 'index.html');
 });
 
-app.use(express.static(PUBLIC_DIR));
+// Evitar servir HTML crudo con placeholders {{ASSET_V}}
+app.get('/index.html', requireAuth, (req, res) => sendVersionedHtml(res, 'index.html'));
+app.get('/login.html', (req, res) => {
+  if (req.session?.waAuth) return res.redirect('/');
+  return sendVersionedHtml(res, 'login.html');
+});
+
+app.use(express.static(PUBLIC_DIR, {
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    const base = path.basename(filePath);
+    if (base === 'index.html' || base === 'login.html') {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      return;
+    }
+    if (/\.(js|css)$/i.test(filePath)) {
+      // Cachean por URL (?v=digest); si cambia el archivo, cambia el query
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+  }
+}));
 
 async function backfillRsvpFromMessages() {
   try {
@@ -939,6 +997,7 @@ async function start() {
 
   server.listen(PORT, () => {
     console.log(`[wa-inbox] http://localhost:${PORT}`);
+    console.log(`[wa-inbox] Assets v=${APP_VERSION.version} · builtAt=${APP_VERSION.builtAt}`);
   });
 }
 

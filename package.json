@@ -1,6 +1,6 @@
 {
   "name": "innar-wa-inbox",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Bandeja WhatsApp Twilio (app aparte de Innar) — Hostinger subdominio",
   "main": "server.js",
   "scripts": {

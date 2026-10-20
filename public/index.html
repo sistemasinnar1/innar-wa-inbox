@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="app-version" content="{{ASSET_V}}" />
   <title>WhatsApp — Innar</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v={{ASSET_V}}" />
 </head>
 <body>
   <div class="wa-page">
@@ -191,6 +192,7 @@
   <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/locale/es.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/plugin/relativeTime.js"></script>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js?v=20260923-historial"></script>
+  <script src="/version-check.js?v={{ASSET_V}}"></script>
+  <script src="/app.js?v={{ASSET_V}}"></script>
 </body>
 </html>
