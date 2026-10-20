@@ -31,6 +31,24 @@ if (!WA_USER || !WA_PASSWORD) {
   console.warn('[WA] Defina WA_USER y WA_PASSWORD en .env antes de producción');
 }
 
+const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
+const DEFAULT_SESSION_SECRET = 'cambiar-session-secret-wa-inbox';
+if (!SESSION_SECRET || SESSION_SECRET === DEFAULT_SESSION_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[WA] SESSION_SECRET inseguro o vacío: defina uno fuerte en .env');
+    process.exit(1);
+  }
+  console.warn('[WA] SESSION_SECRET débil — solo aceptable en desarrollo local');
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isDupKeyError(err) {
+  return !!(err && (err.code === 'ER_DUP_ENTRY' || err.errno === 1062));
+}
+
 const app = express();
 const server = http.createServer(app);
 
@@ -65,7 +83,7 @@ const sessionStore = new MySQLStore({
 
 const sessionMiddleware = session({
   name: 'wa_inbox_sid',
-  secret: process.env.SESSION_SECRET || 'cambiar-session-secret-wa-inbox',
+  secret: SESSION_SECRET || DEFAULT_SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   rolling: true,
@@ -158,11 +176,14 @@ function mapMessage(row) {
     status: row.status,
     error_code: row.error_code || null,
     error_message: row.error_message || null,
-    created_at: row.created_at
+    created_at: row.created_at,
+    event_id: row.event_id || null,
+    calendar_key: row.calendar_key || null,
+    start_iso: row.start_iso || null
   };
 }
 
-async function applyDeliveryStatusUpdate(params) {
+async function applyDeliveryStatusUpdate(params, { attempt = 0 } = {}) {
   const p = params || {};
   const sid = String(p.MessageSid || p.SmsSid || '').trim();
   const nextStatus = wa.normalizeDeliveryStatus(p.MessageStatus || p.SmsStatus || '');
@@ -172,7 +193,15 @@ async function applyDeliveryStatusUpdate(params) {
     `SELECT * FROM wa_messages WHERE twilio_sid = ? AND direction = 'out' LIMIT 1`,
     [sid]
   );
-  if (!row) return null;
+  if (!row) {
+    // El callback a veces llega antes de persistir el outbound
+    if (attempt < 5) {
+      await sleep(200 * (attempt + 1));
+      return applyDeliveryStatusUpdate(params, { attempt: attempt + 1 });
+    }
+    console.warn(`[WA] Status callback sin mensaje local sid=${sid} status=${nextStatus}`);
+    return null;
+  }
   if (!wa.shouldUpdateDeliveryStatus(row.status, nextStatus)) return null;
 
   const errCode = String(p.ErrorCode || '').trim() || null;
@@ -208,35 +237,40 @@ async function applyDeliveryStatusUpdate(params) {
 }
 
 async function findOrCreateConversation(phone, displayName) {
+  const hydrate = async (row) => {
+    if (!row) return null;
+    const name = displayName || null;
+    await db.execute(
+      `UPDATE wa_conversations
+       SET plantilla = 'terapia',
+           oculto = 0,
+           display_name = COALESCE(?, display_name)
+       WHERE id = ?`,
+      [name, row.id]
+    );
+    row.plantilla = 'terapia';
+    row.oculto = 0;
+    if (name) row.display_name = name;
+    return row;
+  };
+
   const existing = await db.queryOne('SELECT * FROM wa_conversations WHERE phone = ? LIMIT 1', [phone]);
-  if (existing) {
-    const updates = [];
-    const params = [];
-    if (displayName && displayName !== existing.display_name) {
-      updates.push('display_name = ?');
-      params.push(displayName);
-      existing.display_name = displayName;
-    }
-    if (!existing.plantilla || existing.plantilla === '') {
-      updates.push("plantilla = 'terapia'");
-      existing.plantilla = 'terapia';
-    }
-    if (updates.length) {
-      params.push(existing.id);
-      await db.execute(
-        `UPDATE wa_conversations SET ${updates.join(', ')} WHERE id = ?`,
-        params
-      );
-    }
-    return existing;
+  if (existing) return hydrate(existing);
+
+  try {
+    const result = await db.execute(
+      `INSERT INTO wa_conversations (phone, display_name, last_message_at, unread_count, plantilla, oculto)
+       VALUES (?, ?, NOW(), 0, 'terapia', 0)`,
+      [phone, displayName || null]
+    );
+    const id = db.insertId(result);
+    return db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
+  } catch (err) {
+    if (!isDupKeyError(err)) throw err;
+    const again = await db.queryOne('SELECT * FROM wa_conversations WHERE phone = ? LIMIT 1', [phone]);
+    if (!again) throw err;
+    return hydrate(again);
   }
-  const result = await db.execute(
-    `INSERT INTO wa_conversations (phone, display_name, last_message_at, unread_count, plantilla)
-     VALUES (?, ?, NOW(), 0, 'terapia')`,
-    [phone, displayName || null]
-  );
-  const id = db.insertId(result);
-  return db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
 }
 
 /** Esta app es la bandeja de terapia: null/vacío cuenta como terapia. */
@@ -329,31 +363,48 @@ app.post('/api/webhook', async (req, res) => {
         status: 'received'
       });
 
-      // SID duplicado = probablemente status callback del mismo mensaje saliente
-      if (inserted.duplicate) return;
-
-      if (esPlantillaTerapia(conv.plantilla)) {
-        await touchConversation(conv.id, {
-          preview: wa.previewText(displayBody),
-          incrementUnread: true,
-          direction: 'in'
-        });
-        const kindEarly = wa.classifyButtonPayload(buttonPayload, rawBody);
-        if (kindEarly === 'si_asistire' || kindEarly === 'no_asistire' || kindEarly === 'escribenos') {
-          await db.execute(
-            `UPDATE wa_conversations SET last_rsvp = ?, last_rsvp_at = NOW() WHERE id = ?`,
-            [kindEarly, conv.id]
-          );
+      // SID duplicado: reconciliar preview/unread (retry Twilio tras fallo parcial)
+      if (inserted.duplicate) {
+        const existingMsg = messageSid
+          ? await db.queryOne('SELECT * FROM wa_messages WHERE twilio_sid = ? LIMIT 1', [messageSid])
+          : null;
+        if (existingMsg && existingMsg.direction === 'in') {
+          await touchConversation(conv.id, {
+            preview: wa.previewText(displayBody || existingMsg.body || ''),
+            incrementUnread: false,
+            direction: 'in'
+          });
+          const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+          emitWa('wa:message', {
+            conversation: mapConversation(convFresh),
+            message: mapMessage(existingMsg)
+          });
+        } else if (existingMsg && existingMsg.direction === 'out') {
+          console.warn(`[WA] SID inbound colisiona con outbound sid=${messageSid}`);
         }
-        const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
-        const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
-        emitWa('wa:message', {
-          conversation: mapConversation(convFresh),
-          message: mapMessage(msgRow)
-        });
+        return;
       }
 
-      if (esPlantillaTerapia(conv.plantilla)) {
+      await touchConversation(conv.id, {
+        preview: wa.previewText(displayBody),
+        incrementUnread: true,
+        direction: 'in'
+      });
+      const kindEarly = wa.classifyButtonPayload(buttonPayload, rawBody);
+      if (kindEarly === 'si_asistire' || kindEarly === 'no_asistire' || kindEarly === 'escribenos') {
+        await db.execute(
+          `UPDATE wa_conversations SET last_rsvp = ?, last_rsvp_at = NOW() WHERE id = ?`,
+          [kindEarly, conv.id]
+        );
+      }
+      const convFresh = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [conv.id]);
+      const msgRow = await db.queryOne('SELECT * FROM wa_messages WHERE id = ?', [inserted.id]);
+      emitWa('wa:message', {
+        conversation: mapConversation(convFresh),
+        message: mapMessage(msgRow)
+      });
+
+      {
       const kind = wa.classifyButtonPayload(buttonPayload, rawBody);
       if (kind === 'si_asistire' || kind === 'no_asistire') {
         void wa.forwardToGasWebhook(p);
@@ -502,10 +553,13 @@ app.post('/api/calendars/sync', requireAuth, async (req, res) => {
     }
     const result = await reminders.loadAndOptionallySend(date, {
       send,
-      emit: emitWa
+      emit: emitWa,
+      mapConversation,
+      mapMessage
     });
     await reminders.annotateSentOnListed(result.listed);
-    const sentOk = (result.sendResults || []).filter((r) => r.ok).length;
+    const sentOk = (result.sendResults || []).filter((r) => r.ok && !r.skipped).length;
+    const sentSkip = (result.sendResults || []).filter((r) => r.skipped).length;
     const sentFail = (result.sendResults || []).filter((r) => !r.ok).length;
     res.json({
       date,
@@ -513,6 +567,7 @@ app.post('/api/calendars/sync', requireAuth, async (req, res) => {
       with_phone: result.listed.flat.filter((e) => e.telefono).length,
       send,
       sent_ok: sentOk,
+      sent_skip: sentSkip,
       sent_fail: sentFail,
       calendars: result.listed.calendars,
       send_results: result.sendResults
@@ -538,7 +593,12 @@ app.post('/api/calendars/send-one', requireAuth, async (req, res) => {
       });
     }
     ev.telefono = estado.phone;
-    const results = await reminders.sendRemindersForEvents([ev], { emit: emitWa });
+    const results = await reminders.sendRemindersForEvents([ev], {
+      emit: emitWa,
+      forceResend: true,
+      mapConversation,
+      mapMessage
+    });
     const one = results[0];
     if (!one || !one.ok) {
       return res.status(502).json({ error: (one && one.error) || 'No se pudo enviar', results });
@@ -617,6 +677,11 @@ app.patch('/api/calendars/events/attendance', requireAuth, async (req, res) => {
       status: b.status,
       paintGooglePink: false
     });
+    emitWa('wa:calendar_attendance', {
+      phone: updated && updated.telefono ? cal.normalizarTelefono(updated.telefono) : null,
+      status: updated && updated.attendance,
+      events: updated ? [updated] : []
+    });
     res.json({ event: updated });
   } catch (e) {
     const status = e.code === 'UNKNOWN_CALENDAR' || e.code === 'NO_EVENT_ID' ? 400 : 500;
@@ -651,8 +716,7 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
       const like = `%${q.replace(/[%_]/g, '')}%`;
       rows = await db.query(
         `SELECT * FROM wa_conversations
-         WHERE IFNULL(oculto, 0) = 0
-           AND (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
+         WHERE (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
            AND (phone LIKE ? OR IFNULL(display_name,'') LIKE ?)
          ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
         [like, like, limit]
@@ -660,8 +724,7 @@ app.get('/api/conversations', requireAuth, async (req, res) => {
     } else {
       rows = await db.query(
         `SELECT * FROM wa_conversations
-         WHERE IFNULL(oculto, 0) = 0
-           AND (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
+         WHERE (plantilla = 'terapia' OR plantilla IS NULL OR plantilla = '')
          ORDER BY IFNULL(last_message_at, created_at) DESC LIMIT ?`,
         [limit]
       );
@@ -697,22 +760,12 @@ app.get('/api/conversations/:id/messages', requireAuth, async (req, res) => {
   }
 });
 
-/** Oculta el chat de la lista. No borra los mensajes ni el hilo del paciente. */
-app.delete('/api/conversations/:id', requireAuth, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'ID inválido' });
-    const conv = await db.queryOne('SELECT * FROM wa_conversations WHERE id = ?', [id]);
-    if (!conv) return res.status(404).json({ error: 'No encontrada' });
-    await db.execute(
-      'UPDATE wa_conversations SET oculto = 1, unread_count = 0 WHERE id = ?',
-      [id]
-    );
-    emitWa('wa:conversation_deleted', { id });
-    res.json({ ok: true, id });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+/** Los chats no se pueden eliminar ni ocultar. */
+app.delete('/api/conversations/:id', requireAuth, (req, res) => {
+  res.status(405).json({
+    error: 'No se pueden eliminar chats',
+    code: 'DELETE_DISABLED'
+  });
 });
 
 app.post('/api/conversations/:id/reply', requireAuth, async (req, res) => {
@@ -842,6 +895,10 @@ async function backfillChatMeta() {
       SET plantilla = 'terapia'
       WHERE plantilla IS NULL OR plantilla = ''
     `);
+    // Restaurar chats que se habían ocultado con el botón Eliminar (ya deshabilitado)
+    await db.execute(`
+      UPDATE wa_conversations SET oculto = 0 WHERE IFNULL(oculto, 0) <> 0
+    `);
   } catch (err) {
     console.warn('[WA] backfill chat:', err.message);
   }
@@ -867,7 +924,12 @@ async function start() {
           day: '2-digit'
         }).format(new Date());
         console.log('[WA] Cron recordatorios', ymd);
-        await reminders.loadAndOptionallySend(ymd, { send: true, emit: emitWa });
+        await reminders.loadAndOptionallySend(ymd, {
+          send: true,
+          emit: emitWa,
+          mapConversation,
+          mapMessage
+        });
       } catch (err) {
         console.error('[WA] Cron falló:', err.message);
       }

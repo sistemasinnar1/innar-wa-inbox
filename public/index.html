@@ -91,8 +91,24 @@
                 <div id="waThreadRsvp" class="wa-thread-rsvp"></div>
               </div>
               <span id="waThreadWindow" class="wa-window-pill"></span>
-              <button type="button" id="btnDeleteChat" class="wa-btn-danger">Eliminar</button>
             </header>
+            <div class="wa-receipt-legend" aria-label="Estados de entrega">
+              <span class="wa-rl-item" title="En cola / enviando">
+                <span class="wa-receipt is-pending" aria-hidden="true"></span> Enviando
+              </span>
+              <span class="wa-rl-item" title="Llegó a WhatsApp">
+                <span class="wa-receipt is-sent" aria-hidden="true"></span> Enviado
+              </span>
+              <span class="wa-rl-item" title="Llegó al teléfono">
+                <span class="wa-receipt is-delivered" aria-hidden="true"></span> Entregado
+              </span>
+              <span class="wa-rl-item" title="El paciente abrió el mensaje">
+                <span class="wa-receipt is-read" aria-hidden="true"></span> Leído
+              </span>
+              <span class="wa-rl-item is-fail" title="No llegó (número inválido, sin WhatsApp, etc.)">
+                <span class="wa-receipt is-fail" aria-hidden="true"></span> Falló
+              </span>
+            </div>
             <div id="waMessageList" class="wa-message-list"></div>
             <div id="waCitaBar" class="wa-cita-bar hidden"></div>
             <div id="waQuick" class="wa-quick hidden"></div>

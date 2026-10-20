@@ -23,6 +23,7 @@ Webhook Twilio:
 4. Si el paciente responde Sí/No o texto → entra por el webhook y se ve en el mismo chat.
 5. Twilio avisa la entrega (`StatusCallback` al mismo webhook): en el chat se ven ✓ / ✓✓ / ! (número inválido, sin WhatsApp, etc.).
 6. Sí/No también se reenvía a Apps Script (`GAS_WEBHOOK_URL`) si quieren seguir llenando el Sheet.
+7. Los chats **no se pueden eliminar** de la bandeja (quedan el historial completo).
 
 ## Google Calendar (obligatorio para cargar/enviar)
 

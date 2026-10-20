@@ -26,6 +26,7 @@
   let conversations = [];
   let activeId = null;
   let messages = [];
+  let openSeq = 0;
   let sending = false;
   let rapidas = cargarRapidas();
   let editandoRapidas = false;
@@ -337,7 +338,9 @@
     const pc = $('panel-chats');
     if (pe) pe.classList.toggle('hidden', currentTab !== 'eventos');
     if (pc) pc.classList.toggle('hidden', currentTab !== 'chats');
-    if (currentTab === 'chats') loadConversations().catch(() => {});
+    if (currentTab === 'chats') {
+      loadConversations().catch((err) => console.warn('[WA] loadConversations', err && err.message));
+    }
     if (currentTab === 'eventos') {
       Object.values(fcInstances).forEach((cal) => {
         try { cal.updateSize(); } catch (_) {}
@@ -359,6 +362,12 @@
 
   function eventKey(ev) {
     return String(ev.event_id || `${ev.calendar_key}|${ev.hora}|${ev.paciente}`);
+  }
+
+  function normalizePhoneDigits(raw) {
+    let digits = String(raw || '').replace(/\D/g, '');
+    if (digits.length === 10) digits = `57${digits}`;
+    return digits;
   }
 
   function analyzePhone(raw) {
@@ -392,9 +401,24 @@
   }
 
   function eventHasChat(ev) {
-    const st = analyzePhone(ev.telefono);
-    if (!st.phone) return false;
-    return conversations.some((c) => String(c.phone || '').replace(/\D/g, '') === st.phone);
+    const want = normalizePhoneDigits(ev && ev.telefono);
+    if (!want) return false;
+    return conversations.some((c) => normalizePhoneDigits(c.phone) === want);
+  }
+
+  function parseEventAttr(el, attrName) {
+    if (!el) return null;
+    const raw = el.getAttribute(attrName);
+    if (!raw) return null;
+    try {
+      return JSON.parse(decodeURIComponent(raw));
+    } catch (_) {
+      try {
+        return JSON.parse(raw);
+      } catch (_2) {
+        return null;
+      }
+    }
   }
 
   function bogotaYmdFromIso(iso) {
@@ -472,15 +496,9 @@
   }
 
   function rsvpForPhone(phone) {
-    const digits = String(phone || '').replace(/\D/g, '');
-    if (!digits) return null;
-    const want = digits.length === 10 ? `57${digits}` : digits;
-    const found = conversations.find((c) => {
-      let p = String(c.phone || '').replace(/\D/g, '');
-      if (p.length === 10) p = `57${p}`;
-      return p === want;
-    });
-    return found || null;
+    const want = normalizePhoneDigits(phone);
+    if (!want) return null;
+    return conversations.find((c) => normalizePhoneDigits(c.phone) === want) || null;
   }
 
   function rsvpKindForEvent(ev) {
@@ -532,7 +550,7 @@
     const futuroSinEnviar = !sent && ev.start_iso && Date.parse(ev.start_iso) > Date.now();
     const canSend = st.ok && !sent;
     const canResend = st.ok && sent;
-    const evJson = esc(JSON.stringify({
+    const evJson = encodeURIComponent(JSON.stringify({
       event_id: ev.event_id,
       calendar_key: ev.calendar_key,
       paciente: ev.paciente,
@@ -583,22 +601,22 @@
       ${attendanceHtml ? `<div class="wa-ev-rsvp">${attendanceHtml}</div>` : ''}
       <div class="wa-ev-attend">
         <button type="button" class="wa-attend-btn is-ok${attendance === 'confirmado' ? ' is-active' : ''}"
-          data-set-attendance="confirmado" data-event='${evJson}' ${canToggle ? '' : 'disabled'}
+          data-set-attendance="confirmado" data-event="${evJson}" ${canToggle ? '' : 'disabled'}
           title="Marcar como confirmado">CONFIRMADO</button>
         <button type="button" class="wa-attend-btn is-no${attendance === 'cancelado' ? ' is-active' : ''}"
-          data-set-attendance="cancelado" data-event='${evJson}' ${canToggle ? '' : 'disabled'}
+          data-set-attendance="cancelado" data-event="${evJson}" ${canToggle ? '' : 'disabled'}
           title="Marcar como cancelado">CANCELADO</button>
       </div>
-      <button type="button" class="${phoneClass}" data-edit-phone='${evJson}' title="Editar teléfono">
+      <button type="button" class="${phoneClass}" data-edit-phone="${evJson}" title="Editar teléfono">
         <span>${esc(phoneLabel)}</span>
         <span class="wa-ev-phone-edit">✎</span>
       </button>
       <div class="wa-ev-actions">
-        <button type="button" class="wa-btn-send" data-send-one='${evJson}' ${canSend || canResend ? '' : 'disabled'}>
+        <button type="button" class="wa-btn-send" data-send-one="${evJson}" ${canSend || canResend ? '' : 'disabled'}>
           ${sent ? 'Reenviar' : 'Enviar'}
         </button>
-        <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event='${evJson}' ${phone ? '' : 'disabled'}>Chat</button>
-        <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event='${evJson}' ${ev.event_id ? '' : 'disabled'} title="Eliminar">✕</button>
+        <button type="button" class="wa-btn-link" data-open-chat="${esc(phone)}" data-event="${evJson}" ${phone ? '' : 'disabled'}>Chat</button>
+        <button type="button" class="wa-btn-link wa-btn-danger-link" data-delete-event="${evJson}" ${ev.event_id ? '' : 'disabled'} title="Eliminar">✕</button>
       </div>
     </article>`;
   }
@@ -762,21 +780,34 @@
   function previewDe(c) {
     const t = String(c.last_message_preview || '').trim();
     if (!t) return '';
-    return c.last_direction === 'out' ? `Tú: ${t}` : t;
+    if (c.last_direction === 'out') {
+      return `<span class="wa-preview-out"><span class="wa-receipt is-sent" aria-hidden="true"></span> ${esc(t)}</span>`;
+    }
+    return esc(t);
   }
 
-  function palomitas(status, errorMessage) {
+  function deliveryKind(status) {
     const s = String(status || '').toLowerCase();
-    const failTitle = String(errorMessage || '').trim() || 'No se pudo entregar';
-    if (s === 'read') return '<span class="wa-ticks is-read" title="Leído">✓✓</span>';
-    if (s === 'delivered') return '<span class="wa-ticks" title="Entregado">✓✓</span>';
-    if (s === 'failed' || s === 'undelivered') {
-      return `<span class="wa-ticks is-fail" title="${esc(failTitle)}">!</span>`;
-    }
-    if (s === 'queued' || s === 'accepted' || s === 'sending') {
-      return '<span class="wa-ticks is-pending" title="Enviando…">✓</span>';
-    }
-    return '<span class="wa-ticks" title="Enviado">✓</span>';
+    if (s === 'read') return 'read';
+    if (s === 'delivered') return 'delivered';
+    if (s === 'failed' || s === 'undelivered') return 'fail';
+    if (s === 'queued' || s === 'accepted' || s === 'sending') return 'pending';
+    return 'sent';
+  }
+
+  function deliveryLabel(kind, errorMessage) {
+    if (kind === 'read') return 'Leído';
+    if (kind === 'delivered') return 'Entregado';
+    if (kind === 'fail') return String(errorMessage || '').trim() || 'No entregado';
+    if (kind === 'pending') return 'Enviando…';
+    return 'Enviado';
+  }
+
+  /** Recibo de entrega estilo WhatsApp (icono + etiqueta accesible). */
+  function receiptHtml(status, errorMessage) {
+    const kind = deliveryKind(status);
+    const label = deliveryLabel(kind, errorMessage);
+    return `<span class="wa-receipt is-${kind}" title="${esc(label)}" aria-label="${esc(label)}"></span>`;
   }
 
   function chatsVisibles() {
@@ -814,7 +845,7 @@
             <span class="wa-conv-name">${esc(name)}</span>
             <span class="wa-conv-time">${esc(formatTime(c.last_message_at))}</span>
           </div>
-          <div class="wa-conv-preview">${esc(previewDe(c))}</div>
+          <div class="wa-conv-preview">${previewDe(c)}</div>
           <div class="wa-conv-meta">
             ${rsvp || ''}
             ${unread ? `<span class="wa-unread">${unread}</span>` : ''}
@@ -846,16 +877,30 @@
       }
       const dir = m.direction === 'out' ? 'out' : 'in';
       const text = displayMessageBody(m);
-      const ticks = dir === 'out' ? palomitas(m.status, m.error_message) : '';
-      const failHint = dir === 'out'
-        && (String(m.status || '').toLowerCase() === 'failed'
-          || String(m.status || '').toLowerCase() === 'undelivered')
-        && m.error_message
-        ? `<div class="wa-bubble-error">${esc(m.error_message)}</div>`
+      const kind = dir === 'out' ? deliveryKind(m.status) : '';
+      const receipt = dir === 'out' ? receiptHtml(m.status, m.error_message) : '';
+      const statusClass = kind ? ` is-${kind}` : '';
+      const failBanner = kind === 'fail'
+        ? `<div class="wa-fail-banner" role="status">
+            <span class="wa-fail-banner-ico" aria-hidden="true"></span>
+            <div class="wa-fail-banner-body">
+              <strong>No entregado</strong>
+              <span>${esc(deliveryLabel('fail', m.error_message))}</span>
+            </div>
+          </div>`
         : '';
+      // Meta primero (float) para que hora + recibo queden al final de la última línea
       parts.push(
-        `<div class="wa-bubble is-${dir}">${esc(text)}${failHint}`
-        + `<span class="wa-bubble-meta">${esc(formatTime(m.created_at))}${ticks}</span></div>`
+        `<div class="wa-msg-row is-${dir}${statusClass}">`
+        + `<div class="wa-bubble is-${dir}${statusClass}">`
+        + `<span class="wa-bubble-meta">`
+        + `<span class="wa-bubble-time">${esc(formatTime(m.created_at))}</span>`
+        + receipt
+        + `</span>`
+        + `<div class="wa-bubble-text">${esc(text)}</div>`
+        + `</div>`
+        + failBanner
+        + `</div>`
       );
     });
     box.innerHTML = parts.join('');
@@ -1007,22 +1052,56 @@
 
   async function loadConversations() {
     const data = await api('/api/conversations?limit=300');
-    conversations = (data.conversations || []).filter(esChatTerapia);
+    const incoming = (data.conversations || []).filter(esChatTerapia);
+    const byId = new Map(conversations.map((c) => [Number(c.id), c]));
+    conversations = incoming.map((c) => {
+      const prev = byId.get(Number(c.id));
+      return prev ? { ...prev, ...c } : c;
+    });
     renderConvList();
     if (loadedEvents.length) renderEvents();
   }
 
   async function openConversation(id) {
+    const seq = ++openSeq;
+    const prevId = activeId;
+    const prevMessages = messages;
     activeId = id;
     renderConvList();
-    const data = await api(`/api/conversations/${id}/messages`);
-    messages = data.messages || [];
-    conversations = conversations.map((c) => (
-      Number(c.id) === Number(id) ? { ...c, ...data.conversation, unread_count: 0 } : c
-    ));
-    showThread(data.conversation);
-    renderMessages();
-    renderConvList();
+    try {
+      const data = await api(`/api/conversations/${id}/messages`);
+      if (seq !== openSeq) return;
+      if (!data.conversation) {
+        throw new Error('Conversación no encontrada');
+      }
+      const fromServer = data.messages || [];
+      // Solo conservar mensajes del mismo hilo que llegaron por socket durante el GET
+      const pending = messages.filter((m) => {
+        if (!m || !m.id) return false;
+        if (Number(m.conversation_id) !== Number(id)) return false;
+        return !fromServer.some((s) => Number(s.id) === Number(m.id));
+      });
+      messages = fromServer.concat(pending).sort((a, b) => Number(a.id) - Number(b.id));
+      conversations = conversations.map((c) => (
+        Number(c.id) === Number(id) ? { ...c, ...data.conversation, unread_count: 0 } : c
+      ));
+      showThread(data.conversation);
+      renderMessages();
+      renderConvList();
+    } catch (err) {
+      if (seq !== openSeq) throw err;
+      activeId = prevId;
+      messages = prevMessages;
+      renderConvList();
+      if (prevId) {
+        const prev = conversations.find((c) => Number(c.id) === Number(prevId));
+        showThread(prev || null);
+        renderMessages();
+      } else {
+        showThread(null);
+      }
+      throw err;
+    }
   }
 
   async function deleteEvent(ev) {
@@ -1047,23 +1126,6 @@
     renderEvents();
     const resultEl = $('waCalResult');
     if (resultEl) resultEl.textContent = `Evento eliminado: ${ev.paciente || ev.event_id}`;
-  }
-
-  async function deleteActiveChat() {
-    if (!activeId) return;
-    const conv = conversations.find((c) => Number(c.id) === Number(activeId));
-    const label = (conv && (conv.display_name || formatPhone(conv.phone))) || 'este chat';
-    const ok = window.confirm(`¿Eliminar el chat con ${label}?\nSe quita de esta lista. No se borra en el celular del paciente.`);
-    if (!ok) return;
-    const id = activeId;
-    await api(`/api/conversations/${id}`, { method: 'DELETE' });
-    conversations = conversations.filter((c) => Number(c.id) !== Number(id));
-    if (Number(activeId) === Number(id)) {
-      activeId = null;
-      messages = [];
-      showThread(null);
-    }
-    renderConvList();
   }
 
   async function sendOneEvent(ev, { openChatAfter } = {}) {
@@ -1214,13 +1276,13 @@
   }
 
   async function openChatByPhone(phone, ev) {
-    const digits = String(phone || '').replace(/\D/g, '');
+    const digits = normalizePhoneDigits(phone);
     if (!digits) {
       window.alert('Este evento no tiene teléfono');
       return;
     }
     await loadConversations();
-    const found = conversations.find((c) => String(c.phone || '').replace(/\D/g, '') === digits);
+    const found = conversations.find((c) => normalizePhoneDigits(c.phone) === digits);
     if (found) {
       switchTab('chats');
       await openConversation(found.id);
@@ -1342,18 +1404,8 @@
   }
 
   function upsertConversation(conv) {
-    if (!conv || !conv.id || !esChatTerapia(conv)) {
-      if (conv && conv.id && !esChatTerapia(conv)) {
-        conversations = conversations.filter((c) => Number(c.id) !== Number(conv.id));
-        if (Number(activeId) === Number(conv.id)) {
-          activeId = null;
-          messages = [];
-          showThread(null);
-        }
-        renderConvList();
-      }
-      return;
-    }
+    if (!conv || !conv.id) return;
+    if (!esChatTerapia(conv)) return;
     const idx = conversations.findIndex((c) => Number(c.id) === Number(conv.id));
     if (idx >= 0) conversations[idx] = { ...conversations[idx], ...conv };
     else conversations.unshift(conv);
@@ -1369,10 +1421,16 @@
       messages[byId] = { ...messages[byId], ...msg };
       return true;
     }
+    // Solo fusionar por SID si el mensaje local aún no tiene id distinto
     if (msg.twilio_sid) {
       const bySid = messages.findIndex((m) => m.twilio_sid && m.twilio_sid === msg.twilio_sid);
       if (bySid >= 0) {
-        messages[bySid] = { ...messages[bySid], ...msg };
+        const local = messages[bySid];
+        if (local.id && msg.id && Number(local.id) !== Number(msg.id)) {
+          messages.push(msg);
+          return true;
+        }
+        messages[bySid] = { ...local, ...msg };
         return true;
       }
     }
@@ -1403,16 +1461,11 @@
       });
       if (loadedEvents.length) renderEvents();
     });
-    sock.on('wa:conversation_deleted', (payload) => {
-      const id = payload && payload.id;
-      if (!id) return;
-      conversations = conversations.filter((c) => Number(c.id) !== Number(id));
-      if (Number(activeId) === Number(id)) {
-        activeId = null;
-        messages = [];
-        showThread(null);
+    sock.on('connect', () => {
+      loadConversations().catch((err) => console.warn('[WA] resync', err && err.message));
+      if (activeId) {
+        openConversation(activeId).catch((err) => console.warn('[WA] resync thread', err && err.message));
       }
-      renderConvList();
     });
   }
 
@@ -1425,8 +1478,7 @@
     eventsWrap.addEventListener('click', (ev) => {
       const attendBtn = ev.target.closest('[data-set-attendance]');
       if (attendBtn && !attendBtn.disabled) {
-        let eventObj = null;
-        try { eventObj = JSON.parse(attendBtn.getAttribute('data-event')); } catch (_) {}
+        const eventObj = parseEventAttr(attendBtn, 'data-event');
         if (!eventObj) return;
         const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
         const next = attendBtn.getAttribute('data-set-attendance');
@@ -1435,8 +1487,7 @@
       }
       const editBtn = ev.target.closest('[data-edit-phone]');
       if (editBtn) {
-        let eventObj = null;
-        try { eventObj = JSON.parse(editBtn.getAttribute('data-edit-phone')); } catch (_) {}
+        const eventObj = parseEventAttr(editBtn, 'data-edit-phone');
         if (eventObj) {
           const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
           openPhoneEdit(live);
@@ -1445,8 +1496,7 @@
       }
       const delBtn = ev.target.closest('[data-delete-event]');
       if (delBtn && !delBtn.disabled) {
-        let eventObj = null;
-        try { eventObj = JSON.parse(delBtn.getAttribute('data-delete-event')); } catch (_) {}
+        const eventObj = parseEventAttr(delBtn, 'data-delete-event');
         if (!eventObj) return;
         const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
         deleteEvent(live).catch((e) => {
@@ -1456,8 +1506,7 @@
       }
       const sendBtn = ev.target.closest('[data-send-one]');
       if (sendBtn && !sendBtn.disabled) {
-        let eventObj = null;
-        try { eventObj = JSON.parse(sendBtn.getAttribute('data-send-one')); } catch (_) {}
+        const eventObj = parseEventAttr(sendBtn, 'data-send-one');
         if (!eventObj) return;
         const live = loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj;
         if (!window.confirm(`¿Enviar recordatorio a ${live.paciente}?`)) return;
@@ -1468,8 +1517,7 @@
       }
       const btn = ev.target.closest('[data-open-chat]');
       if (!btn || btn.disabled) return;
-      let eventObj = null;
-      try { eventObj = JSON.parse(btn.getAttribute('data-event') || 'null'); } catch (_) {}
+      const eventObj = parseEventAttr(btn, 'data-event');
       const live = eventObj
         ? (loadedEvents.find((e) => eventKey(e) === eventKey(eventObj)) || eventObj)
         : null;
@@ -1491,13 +1539,6 @@
   if (phoneForm) phoneForm.addEventListener('submit', submitPhoneEdit);
   const peTel = $('peTelefono');
   if (peTel) peTel.addEventListener('input', () => updatePhoneHint(peTel.value));
-
-  const btnDeleteChat = $('btnDeleteChat');
-  if (btnDeleteChat) {
-    btnDeleteChat.addEventListener('click', () => {
-      deleteActiveChat().catch((e) => window.alert(e.message));
-    });
-  }
 
   const btnCalNew = $('btnCalNew');
   if (btnCalNew) btnCalNew.addEventListener('click', openNewEventModal);
@@ -1634,16 +1675,25 @@
     btnCalSend.disabled = true;
     let ok = 0;
     let fail = 0;
+    const failHints = [];
     try {
       for (const ev of pending) {
         try {
           await sendOneEvent(ev, { openChatAfter: false });
           ok += 1;
-        } catch (_) {
+        } catch (err) {
           fail += 1;
+          if (failHints.length < 3) {
+            failHints.push(`${ev.paciente || 'Cita'}: ${(err && err.message) || 'error'}`);
+          }
         }
       }
-      if (resultEl) resultEl.textContent = `Enviados ${ok}${fail ? ` · fallidos ${fail}` : ''} · ${meta.name}`;
+      if (resultEl) {
+        resultEl.textContent = `Enviados ${ok}${fail ? ` · fallidos ${fail}` : ''} · ${meta.name}`;
+      }
+      if (fail && failHints.length) {
+        window.alert(`Algunos envíos fallaron (${fail}):\n${failHints.join('\n')}`);
+      }
     } finally {
       btnCalSend.disabled = false;
     }
